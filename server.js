@@ -385,3 +385,39 @@ const upload = multer({
     }
 }).single('logo_file'); // logo_file is the name of input field in the form
 
+// [CONF]
+// Configure
+app.post('/api/setup/configure', upload, (req, res) => {
+    // By placing upload here, multer can already process these request
+    // req.body is populated with text fields
+    // and req.file should have the file.
+
+    const { school_name, school_type, address, organization_hotline, country_code } = req.body;
+    const logo_directory = req.file ? `/assets/images/logos/${req.file.filename}`: null;
+
+    if (!school_name || !country_code) {
+        debugLogWriteToFile('[CONF]: Configuration save failed, school name or country code was not provided at all.');
+        return res.status(400).json({
+            error: 'School name or country code are required...'
+        });
+    }
+    // Check if a configuration already exists
+    db.get('SELECT COUNT(*) as count FROM configurations', (dbErr, row) => {
+        if (dbErr) {
+            debugLogWriteToFile(`[CONF]: Error checking to the database for possible duplicate configurations. Error: ${dbErr.message}`);
+            return res.status(500).json({
+                error: 'Database Error while checking for existing configuration'
+            });
+        }
+        if (row.count > 0) {
+            debugLogWriteToFile(`[CONF]: Configuration Blocked: A configuration entry already exists`);
+            return res.status(409).json({
+                error: 'Configuration entry already exists, abort.'
+            });
+        }
+
+        const insert = `
+        
+        `
+    })
+})

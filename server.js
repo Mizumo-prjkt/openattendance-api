@@ -1,7 +1,8 @@
 /*
  * OpenAttendance API
  * License: <to be declared>
- *
+ * Server Version: 
+ * For Client Version:
  * 
  */
 
@@ -9,6 +10,7 @@
  * Initialize some components
  */
 const express = require('express');
+const session = require('express-session');
 const path = require('path');
 const sequelize = require('sequelize');
 const sqlite3 = require('sqlite3').verbose();
@@ -22,6 +24,10 @@ const crypto = require('crypto');
 const { exec } = require('child_process');
 const e = require('express');
 const { DESTRUCTION } = require('dns');
+const NTP = require('ntp-time');
+const os = require('os');
+const checkDiskSpace = require('check-disk-space').default;
+
 
 
 // Initial
@@ -32,6 +38,35 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({
     extended: true
 }));
+
+// Additional proceedures before we continue
+// Create a directory for logo uploads if it doesn't exist
+const logoUploadDir = path.join(__dirname, 'setup/assets/images/logos');
+if (!fs.existsSync(logoUploadDir)) {
+    fs.mkdirSync(logoUploadDir, { recursive: true });
+}
+
+// Create a directory for staff profile image uploads if it doesn't exist
+const staffImageUploadDir = path.join(__dirname, 'runtime/shared/images/staff_profiles');
+if (!fs.existsSync(staffImageUploadDir)) {
+    fs.mkdirSync(staffImageUploadDir, { recursive: true });
+}
+// Create a directory for school logo uploads
+const schoolLogoUploadDir = path.join(__dirname, 'runtime/shared/images/school_logos');
+if (!fs.existsSync(schoolLogoUploadDir)) {
+    fs.mkdirSync(schoolLogoUploadDir, { recursive: true });
+}
+// Create a directory for database backups
+const backupsDir = path.join(__dirname, 'database', 'backups');
+if (!fs.existsSync(backupsDir)) {
+    fs.mkdirSync(backupsDir, { recursive: true });
+}
+// Create a temporary directory for experimental files
+const tmpDir = path.join(__dirname, 'tmp');
+if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+}
+
 
 // DebugWriteToFile function
 // From @MizProject/Mitra setup.js
@@ -358,13 +393,6 @@ app.post('/api/setup/validate-admin', (req, res) => {
 
 // [MULTER-UPD]
 // Multer Configuration Component
-
-// Create a directory for logo uploads if it doesn't exist
-const logoUploadDir = path.join(__dirname, 'setup/assets/images/logos');
-if (!fs.existsSync(logoUploadDir)) {
-    fs.mkdirSync(logoUploadDir, { recursive: true });
-}
-
 // LOGO STORAGE
 const logoStorage = multer.diskStorage({
     destination: function (req, file, cb) {

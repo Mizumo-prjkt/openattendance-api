@@ -28,6 +28,10 @@ const { DESTRUCTION } = require('dns');
 let debugMode = false;
 let logFilePath;
 let argEnv = process.argv.slice(2);
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({
+    extended: true
+}));
 
 // DebugWriteToFile function
 // From @MizProject/Mitra setup.js
@@ -417,7 +421,85 @@ app.post('/api/setup/configure', upload, (req, res) => {
         }
 
         const insert = `
+            INSERT INTO configurations (
+                school_name, school_type, address, logo_directory, organization_hotline, country_code
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        `;
+
+        const params = [school_name , school_type || null, address || null, logo_directory , organization_hotline || null , country_code]
+
+        db.run(insert, params, function(insertErr) {
+            if (insertErr) {
+                debugLogWriteToFile(`[CONF] ERROR: Database error on config creation: ${insertErr.message}`);
+                return res.status(500).json({
+                    error: insertErr.message
+                });
+            }
+            debugLogWriteToFile(`[CONF]: Configuration saved successfully with the ID: ${this.lastID}`);
+            res.json({
+                message: 'Configuration saved successfully.',
+                id: this.lastID
+            });
+        });
+    });
+});
+
+// [VERI_SCHEMA]
+// Verifying schema DB creation and verification
+app.get('/api/setup/verify-schema', async (req, res) => {
+    debugLogWriteToFile(`[VERI_SCHEMA]: Starting DB schema creation and verification...`);
+    try {
+        // 1. Read the entire schema
+        const schemaPath = path.join(__dirname, 'database_schema.sql');
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+
+        // 2. Execute the entire script at once
+        // We use `CREATE TABLE IF NOT EXISTS` so to try create a table without
+        // causing any issues whatsoever
+        await new Promise((resolve, reject) => {
+            db.exec(schemaSql, (err) => {
+                if (err) {
+                    debugLogWriteToFile(`[VERI_SCHEMA]: Schema Exec failed: ${err.message}`);
+                    return reject(err);
+                }
+                debugLogWriteToFile(`[VERI_SCHEMA]: Schema script executed successfully.`);
+                resolve();
+            });
+        });
+
+        // 3. We confirm that all table should exist as defined by the
+        // schema
+        const expectedTableNames = (schemaSql.match(/CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/gi) || [])
+            .map(s => s.match(/CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/i)[i]);
         
-        `
-    })
-})
+        const getTables = () => new Promise((resolve, reject) => {
+            db.all("SELECT name FROM sqlite_master WHERE type='table'", [], (err, tables) => {
+                if (err) {
+                    debugLogWriteToFile(`[VERI_SCHEMA] FATAL: Error occured: ${err.message}`)
+                    return reject(err);
+                }
+                resolve(tables.map(t => t.name));
+            });
+        });
+
+        const actualTables = await getTables();
+
+        const actions = expectedTableNames.map(table => ({
+            table: table,
+            status: actualTables.includes(table) ? 'exists': 'missing'
+        }));
+
+        const allTablesExist = actions.every(a => a.status === 'exists');
+        debugLogWriteToFile('[VERI_SCHEMA]: Schema verification process complete.')
+        res.json({
+            sucess: allTablesExist,
+            actions: actions
+        });
+    } catch (error) {
+        debugLogWriteToFile(`[VERI_SCHEMA] FATAL: Schema verification failed... ${error.message}`);
+        res.status(500).json({
+            error: 'Failed to verify DB schema',
+            details: error.message
+        });
+    }
+});

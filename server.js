@@ -146,9 +146,13 @@ process.on('uncaughtException', (err) => {
 
 
 app.listen(PORT, () => {
+    brkln('nl');
+    brkln('el');
     console.log('OpenAttendance API is running...');
     console.log(`API PORT: ${PORT}`);
-    console.log(`For developers, please check the documentation...`)
+    console.log(`For developers, please check the documentation...`);
+    brkln('el');
+    brkln('nl');
 })
 
 // Set the SQLite DB
@@ -193,6 +197,28 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
+
+// Function
+/*
+ * Prints Break Lines for casual readability
+ * @param {string} type of the breakline feature
+ * - nl: uses \n (New Line)
+ * - dl: uses ------ (Dashed Line)
+ * - el: uses ====== (Equal Line)
+ * @returns {void} Prints the break to console
+ */
+function brkln(type) {
+    switch (type) {
+        case 'nl':
+            return console.log('\n');
+        case 'dl':
+            return console.log('--------------------------');
+        case 'el':
+            return console.log('==========================');
+        default:
+            return console.log('\n');
+    }
+}
 
 // API Features
 

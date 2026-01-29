@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "server": "nodemon server.js"
+  },
   "dependencies": {
     "bcrypt": "^6.0.0",
     "body-parser": "^2.2.1",

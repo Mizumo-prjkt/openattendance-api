@@ -28,8 +28,7 @@ CREATE TABLE IF NOT EXISTS students (
     student_id TEXT NOT NULL UNIQUE,
     qr_code_token TEXT UNIQUE,
     profile_image_path TEXT,
-    classroom_section TEXT,
-    
+    classroom_section TEXT
 );
 
 -- 3. Configurations

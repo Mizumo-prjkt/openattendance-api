@@ -1,0 +1,471 @@
+# OpenAttendance API Backend Call Guide
+
+## Base URL
+```
+http://localhost:{PORT}
+```
+Default PORT: `10002` (or as defined in environment variable `PORT`)
+
+---
+
+## Table of Contents
+1. [Setup Endpoints](#setup-endpoints)
+2. [Benchmark Endpoints](#benchmark-endpoints)
+3. [Student Endpoints](#student-endpoints)
+
+---
+
+## Setup Endpoints
+
+### 1. Create Admin Account
+**Endpoint:** `POST /api/setup/create-admin`
+
+**Description:** Creates an initial admin account for the system. Can only be created if no admin account exists.
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "username": "admin_username",
+  "password": "secure_password"
+}
+```
+
+**Response Success (200):**
+```json
+{
+  "message": "Admin account successfully created",
+  "id": 1
+}
+```
+
+**Response Error (400):**
+```json
+{
+  "error": "Username and Password are required."
+}
+```
+
+**Response Error (409):**
+```json
+{
+  "error": "An admin account already exists!!!"
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+### 2. Validate Admin Credentials
+**Endpoint:** `POST /api/setup/validate-admin`
+
+**Description:** Validates admin login credentials against stored credentials in the database.
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "username": "admin_username",
+  "password": "password_to_verify"
+}
+```
+
+**Response Success (200):**
+```json
+{
+  "success": true,
+  "message": "Admin credentials are valid"
+}
+```
+
+**Response Error (400):**
+```json
+{
+  "error": "Username and password are not provided"
+}
+```
+
+**Response Error (401):**
+```json
+{
+  "success": false,
+  "error": "Invalid credentials"
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Validation error: Error message details"
+}
+```
+
+---
+
+### 3. Configure School Setup
+**Endpoint:** `POST /api/setup/configure`
+
+**Description:** Saves initial school configuration including name, type, address, hotline, country code, and logo upload.
+
+**Request Headers:**
+```
+Content-Type: multipart/form-data
+```
+
+**Request Body (Form Data):**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| school_name | string | Yes | Name of the school |
+| school_type | string | No | Type of school (e.g., Primary, Secondary) |
+| address | string | No | School address |
+| organization_hotline | string | No | Contact hotline number |
+| country_code | string | Yes | ISO country code (e.g., US, GB, IN) |
+| logo_file | file | No | School logo image (PNG/JPG/JPEG only) |
+
+**Response Success (200):**
+```json
+{
+  "message": "Configuration saved successfully.",
+  "id": 1
+}
+```
+
+**Response Error (400):**
+```json
+{
+  "error": "School name or country code are required..."
+}
+```
+
+**Response Error (409):**
+```json
+{
+  "error": "Configuration entry already exists, abort."
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+### 4. Verify Database Schema
+**Endpoint:** `GET /api/setup/verify-schema`
+
+**Description:** Verifies and initializes the database schema by executing the schema SQL file and checking if all expected tables exist.
+
+**Request Headers:** None required
+
+**Request Body:** None
+
+**Response Success (200):**
+```json
+{
+  "success": true,
+  "actions": [
+    {
+      "table": "admin_login",
+      "status": "exists"
+    },
+    {
+      "table": "students",
+      "status": "exists"
+    },
+    {
+      "table": "configurations",
+      "status": "missing"
+    }
+  ]
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Failed to verify DB schema",
+  "details": "Error message details"
+}
+```
+
+---
+
+## Benchmark Endpoints
+
+### 5. Sequential Write Benchmark
+**Endpoint:** `POST /api/benchmark/sequential-write`
+
+**Description:** Performs a single database write operation to test sequential write performance.
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{}
+```
+
+**Response Success (200):**
+```json
+{
+  "message": "success",
+  "id": 42
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+### 6. Bulk Write Benchmark
+**Endpoint:** `POST /api/benchmark/bulk-write`
+
+**Description:** Performs bulk database write operations in a transaction to test bulk write performance.
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "records": [
+    {
+      "col_text1": "value1",
+      "col_text2": "value2",
+      "col_int1": 100
+    },
+    {
+      "col_text1": "value3",
+      "col_text2": "value4",
+      "col_int1": 200
+    }
+  ]
+}
+```
+
+**Response Success (200):**
+```json
+{
+  "message": "success",
+  "count": 2
+}
+```
+
+**Response Error (400):**
+```json
+{
+  "error": "Invalid Payload, 'records' array not found..."
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+### 7. Read All Benchmark Data
+**Endpoint:** `GET /api/benchmark/read-all`
+
+**Description:** Retrieves all records from the benchmark test table.
+
+**Request Headers:** None required
+
+**Request Body:** None
+
+**Response Success (200):**
+```json
+{
+  "message": "success",
+  "data": [
+    {
+      "id": 1
+    },
+    {
+      "id": 2
+    },
+    {
+      "id": 3
+    }
+  ]
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+### 8. Cleanup Benchmark Data
+**Endpoint:** `POST /api/benchmark/cleanup`
+
+**Description:** Clears all benchmark test data from the database and resets the identity/auto-increment counter.
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{}
+```
+
+**Response Success (200):**
+```json
+{
+  "message": "success",
+  "note": "Table truncated and identity reset"
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+## Student Endpoints
+
+### 9. Add Student
+**Endpoint:** `POST /api/students/add`
+
+**Description:** Adds a new student to the system with auto-generated QR code token for attendance tracking.
+
+**Request Headers:**
+```
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "first_name": "John",
+  "last_name": "Doe",
+  "student_id": "STU001"
+}
+```
+
+**Response Success (200):**
+```json
+{
+  "message": "Student added",
+  "student": {
+    "id": 1,
+    "first_name": "John",
+    "last_name": "Doe",
+    "student_id": "STU001",
+    "qr_code_token": "550e8400-e29b-41d4-a716-446655440000"
+  },
+  "qr_data": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response Error (500):**
+```json
+{
+  "error": "Error message details"
+}
+```
+
+---
+
+## Error Handling
+
+All endpoints follow standard HTTP status codes:
+
+| Status Code | Meaning |
+|-------------|---------|
+| 200 | Success |
+| 400 | Bad Request (missing/invalid parameters) |
+| 401 | Unauthorized (invalid credentials) |
+| 409 | Conflict (duplicate entry/resource exists) |
+| 500 | Internal Server Error |
+
+---
+
+## Notes
+
+- All timestamps are managed in UTC and converted to local time in logs
+- Passwords are hashed using bcrypt with 10 salt rounds
+- Images uploaded must be PNG, JPG, or JPEG format
+- QR tokens are generated as secure UUIDs
+- Database uses PostgreSQL with connection pooling
+- Debug mode can be enabled with `--debug` flag for extended logging
+
+---
+
+## Example Usage
+
+### Creating Admin Account
+```bash
+curl -X POST http://localhost:10002/api/setup/create-admin \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "SecurePass123"}'
+```
+
+### Validating Admin
+```bash
+curl -X POST http://localhost:10002/api/setup/validate-admin \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "SecurePass123"}'
+```
+
+### Adding a Student
+```bash
+curl -X POST http://localhost:10002/api/students/add \
+  -H "Content-Type: application/json" \
+  -d '{"first_name": "John", "last_name": "Doe", "student_id": "STU001"}'
+```
+
+### Configuring School
+```bash
+curl -X POST http://localhost:10002/api/setup/configure \
+  -F "school_name=ABC School" \
+  -F "country_code=US" \
+  -F "school_type=Secondary" \
+  -F "address=123 Main St" \
+  -F "organization_hotline=555-1234" \
+  -F "logo_file=@/path/to/logo.png"
+```
+
+---
+
+**Last Updated:** February 3, 2026  
+**API Version:** Based on server.js implementation

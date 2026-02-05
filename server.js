@@ -293,65 +293,69 @@ app.post('/api/benchmark/bulk-write', async (req, res) => {
 
 // [CRT_ADM]
 // Creating admin account
-app.post('/api/setup/create-admin', (req, res) => {
-    const { username, password } = req.body;
+app.post('/api/setup/create-admin', async (req, res) => {
+    const { username, password, name, staff_id, email_address, staff_type } = req.body;
     // We check if the API got the username and password before proceeding...
-    if (!username || !password) {
+    if (!username || !password || !name || !staff_id || !staff_type) {
         // Failed, because its blank, probably format error.
-        debugLogWriteToFile(`[CRT_ADM]: Admin creation failed... Username and Password was not provided to Endpoint`);
+        debugLogWriteToFile(`[CRT_ADM]: Admin creation failed... Missing required fields.`);
         return res.status(400).json({
-            error: 'Username and Password are required.'
+            error: 'Username, Password, Name, Staff ID, and Staff Type are required.'
         });
     }
     
-    // We check if an account already exists
-    // Note: The provided schema does not have 'admin_login', but 'staff_login'. 
-    // Assuming 'admin_login' exists or using 'staff_login' logic as per request context.
-    // Using $1 for params.
-    pool.query('SELECT COUNT(*)::int as count FROM admin_login', (err, result) => {
-        if (err) {
-            debugLogWriteToFile(`[CRT_ADM]: Error checking for possible duplicate admin account, are you sure that the database is ok? Raw error: ${err.message}`);
-            return res.status(500).json({
-                error: 'Database error while checking for existing admin'
-            });
-        }
-        
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // We check if an account already exists in staff_login
+        const checkResult = await client.query('SELECT COUNT(*)::int as count FROM staff_login');
+
         // Postgres returns count as string usually, or we cast it in SQL
-        if (result.rows[0].count > 0) {
+        if (checkResult.rows[0].count > 0) {
+            await client.query('ROLLBACK');
             debugLogWriteToFile(`[CRT_ADM]: Admin account creation halted, account already exists!`);
             return res.status(409).json({
                 error: 'An admin account already exists!!!'
             });
         }
 
-        bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
-            if (hashErr) {
-                debugLogWriteToFile(`[CRT_ADM - CRITICAL!]: BCrypt Error! SOMETHING WENT WRONG WITH BCRYPT!: ${hashErr.message}`);
-                return res.status(500).json({
-                    error: 'Failed to hash password'
-                });
-            }
-            
-            // Assuming admin_login has an ID column, adding RETURNING id
-            const insert = 'INSERT INTO admin_login (username, password) VALUES ($1, $2) RETURNING id';
-            pool.query(insert, [username, hashedPassword], (dbErr, result) => {
-                if (dbErr) {
-                    debugLogWriteToFile(`[CRT-ADM]: DB Error on admin creation: ${dbErr.message}`);
-                    return res.status(500).json({
-                        error: dbErr.message
-                    });
-                }
-                
-                // Assuming ID is returned
-                const newId = result.rows[0].id;
-                debugLogWriteToFile(`[CRT-ADM]: Admin account successfully creeated with ID: ${newId}`);
-                res.json({
-                    message: 'Admin account successfuly created',
-                    id: newId
-                });
-            });
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Split name for staff_accounts
+        const nameParts = name.trim().split(/\s+/);
+        const firstName = nameParts[0];
+        const lastName = nameParts.slice(1).join(' ') || '';
+
+        // Insert into staff_accounts
+        await client.query(
+            'INSERT INTO staff_accounts (staff_id, first_name, last_name, email_address, staff_type) VALUES ($1, $2, $3, $4, $5)',
+            [staff_id, firstName, lastName, email_address, staff_type]
+        );
+
+        // Insert into staff_login
+        const insertLogin = 'INSERT INTO staff_login (username, password, staff_id) VALUES ($1, $2, $3) RETURNING id';
+        const loginResult = await client.query(insertLogin, [username, hashedPassword, staff_id]);
+
+        await client.query('COMMIT');
+
+        const newId = loginResult.rows[0].id;
+        debugLogWriteToFile(`[CRT-ADM]: Admin account successfully creeated with ID: ${newId}`);
+        res.json({
+            message: 'Admin account successfuly created',
+            id: newId
         });
-    });
+
+    } catch (err) {
+        await client.query('ROLLBACK');
+        debugLogWriteToFile(`[CRT_ADM]: Error creating admin account: ${err.message}`);
+        res.status(500).json({
+            error: err.message
+        });
+    } finally {
+        client.release();
+    }
 });
 
 // [CLNP]
@@ -403,7 +407,7 @@ app.post('/api/setup/validate-admin', (req, res) => {
             error: 'Username and password are not provided'
         });
     }
-    const query = 'SELECT * FROM admin_login WHERE username = $1';
+    const query = 'SELECT * FROM staff_login WHERE username = $1';
     pool.query(query, [username], (err, result) => {
         if (err) {
             debugLogWriteToFile(`[VA-ADMIN] CRITICAL: DB Error on admin validation: ${err.message} `);

@@ -49,7 +49,7 @@ DB_PORT=5432
 ### 1. Create Admin Account
 **Endpoint:** `POST /api/setup/create-admin`
 
-**Description:** Creates an initial admin account for the system. Can only be created if no admin account exists.
+**Description:** Creates an initial admin account for the system by creating entries in both `staff_accounts` and `staff_login` tables. Can only be created if no staff login account exists.
 
 **Request Headers:**
 ```
@@ -60,14 +60,28 @@ Content-Type: application/json
 ```json
 {
   "username": "admin_username",
-  "password": "secure_password"
+  "password": "secure_password",
+  "name": "John Doe",
+  "staff_id": "STAFF001",
+  "email_address": "admin@school.com",
+  "staff_type": "teacher"
 }
 ```
+
+**Required Fields:**
+- `username` (string) - Unique login username
+- `password` (string) - Account password (will be hashed with bcrypt)
+- `name` (string) - Full name of the staff member
+- `staff_id` (string) - Unique staff identifier
+- `staff_type` (string) - One of: `student_council`, `teacher`, `security`
+
+**Optional Fields:**
+- `email_address` (string) - Staff email address
 
 **Response Success (200):**
 ```json
 {
-  "message": "Admin account successfully created",
+  "message": "Admin account successfuly created",
   "id": 1
 }
 ```
@@ -75,7 +89,7 @@ Content-Type: application/json
 **Response Error (400):**
 ```json
 {
-  "error": "Username and Password are required."
+  "error": "Username, Password, Name, Staff ID, and Staff Type are required."
 }
 ```
 
@@ -89,15 +103,14 @@ Content-Type: application/json
 **Response Error (500):**
 ```json
 {
-  "error": "Database error while checking for existing admin"
+  "error": "Error message details"
 }
 ```
-or
-```json
-{
-  "error": "Failed to hash password"
-}
-```
+
+**Notes:**
+- Creates both a `staff_accounts` entry and a `staff_login` entry in a transaction
+- Password is hashed using bcrypt with 10 salt rounds before storage
+- If any error occurs, the entire transaction is rolled back
 
 ---
 
@@ -484,7 +497,14 @@ All endpoints follow standard HTTP status codes:
 ```bash
 curl -X POST http://localhost:8080/api/setup/create-admin \
   -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "SecurePass123"}'
+  -d '{
+    "username": "admin",
+    "password": "SecurePass123",
+    "name": "John Doe",
+    "staff_id": "STAFF001",
+    "email_address": "admin@school.com",
+    "staff_type": "teacher"
+  }'
 ```
 
 ### Validating Admin

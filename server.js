@@ -324,23 +324,21 @@ app.post('/api/setup/create-admin', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         // Split name for staff_accounts
-        const nameParts = name.trim().split(/\s+/);
-        const firstName = nameParts[0];
-        const lastName = nameParts.slice(1).join(' ') || '';
+        const nameParts = name
 
         // Insert into staff_accounts
         await client.query(
-            'INSERT INTO staff_accounts (staff_id, first_name, last_name, email_address, staff_type) VALUES ($1, $2, $3, $4, $5)',
-            [staff_id, firstName, lastName, email_address, staff_type]
+            'INSERT INTO staff_accounts (staff_id, name, email_address, staff_type) VALUES ($1, $2, $3, $4)',
+            [staff_id, nameParts, email_address, staff_type]
         );
 
         // Insert into staff_login
-        const insertLogin = 'INSERT INTO staff_login (username, password, staff_id) VALUES ($1, $2, $3) RETURNING id';
+        const insertLogin = 'INSERT INTO staff_login (username, password, staff_id) VALUES ($1, $2, $3) RETURNING login_id';
         const loginResult = await client.query(insertLogin, [username, hashedPassword, staff_id]);
 
         await client.query('COMMIT');
 
-        const newId = loginResult.rows[0].id;
+        const newId = loginResult.rows[0].login_id;
         debugLogWriteToFile(`[CRT-ADM]: Admin account successfully creeated with ID: ${newId}`);
         res.json({
             message: 'Admin account successfuly created',

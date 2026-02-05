@@ -1,32 +1,36 @@
 /*
- * OpenAttendance API
+ * OpenAttendance API (PostgreSQL Version)
  * License: <to be declared>
- * Server Version: 
+ * Server Version: ??
  * For Client Version:
+ * 
  * 
  * */
 
 /*
  * Initialize some components
  */
-require('dotenv').config(); // Load environment variables first
+const env = require('dotenv');
+env.config();
 const express = require('express');
 const session = require('express-session');
 const path = require('path');
-// const sequelize = require('sequelize'); // Commented out unless you strictly use it
-const { Pool } = require('pg'); // REPLACED sqlite3 with pg
+// const sequelize = require('sequelize'); // Removed if not strictly used, otherwise configure for PG
+const { Pool } = require('pg'); // Changed from sqlite3 to pg
 const bodyParser = require('body-parser');
 const app = express();
 const bcrypt = require('bcrypt');
 const fs = require('fs');
-const PORT = process.env.PORT || 10002;
+const PORT = 8080;
 const mkdirp = require('mkdirp');
 const crypto = require('crypto');
 const { exec } = require('child_process');
+const e = require('express');
+const { DESTRUCTION } = require('dns');
 const NTP = require('ntp-time');
 const os = require('os');
-const checkDiskSpace = require('check-disk-space').default || require('check-disk-space');
-const multer = require('multer'); // Ensure this is required
+const checkDiskSpace = require('check-disk-space').default;
+const multer = require('multer'); // Added missing requirement based on code usage
 
 // Initial
 let debugMode = false;
@@ -37,39 +41,51 @@ app.use(bodyParser.urlencoded({
     extended: true
 }));
 
-// --- Directory Setup ---
+// Additional proceedures before we continue
+// Create a directory for logo uploads if it doesn't exist
 const logoUploadDir = path.join(__dirname, 'setup/assets/images/logos');
-if (!fs.existsSync(logoUploadDir)) fs.mkdirSync(logoUploadDir, { recursive: true });
+if (!fs.existsSync(logoUploadDir)) {
+    fs.mkdirSync(logoUploadDir, { recursive: true });
+}
 
+// Create a directory for staff profile image uploads if it doesn't exist
 const staffImageUploadDir = path.join(__dirname, 'runtime/shared/images/staff_profiles');
-if (!fs.existsSync(staffImageUploadDir)) fs.mkdirSync(staffImageUploadDir, { recursive: true });
-
+if (!fs.existsSync(staffImageUploadDir)) {
+    fs.mkdirSync(staffImageUploadDir, { recursive: true });
+}
+// Create a directory for school logo uploads
 const schoolLogoUploadDir = path.join(__dirname, 'runtime/shared/images/school_logos');
-if (!fs.existsSync(schoolLogoUploadDir)) fs.mkdirSync(schoolLogoUploadDir, { recursive: true });
-
+if (!fs.existsSync(schoolLogoUploadDir)) {
+    fs.mkdirSync(schoolLogoUploadDir, { recursive: true });
+}
+// Create a directory for database backups
 const backupsDir = path.join(__dirname, 'database', 'backups');
-if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
-
+if (!fs.existsSync(backupsDir)) {
+    fs.mkdirSync(backupsDir, { recursive: true });
+}
+// Create a temporary directory for experimental files
 const tmpDir = path.join(__dirname, 'tmp');
-if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+}
 
 
-// --- Debug Logging System ---
-if (argEnv.includes('--debug')) {
+// DebugWriteToFile function
+// From @MizProject/Mitra setup.js
+// Check if being run by nodemon
+if (argEnv.includes('--debug')) { // Fixed typo argenv -> argEnv
     console.log("Setup is being run with --debug flag.");
     console.log("Which means, its being run in development mode.");
     console.log("Enabling extreme debug logging for development.");
-    debugMode = true;
-    
+    debugMode = true; 
+    // Now, create the logfile
     const __dayToday = new Date();
     const __timeToday = __dayToday.toLocaleTimeString().replace(/:/g, '-');
     const __dateToday = __dayToday.toLocaleDateString().replace(/\//g, '-');
-    
     const logFileName = `debug-openattendance-log-server-${__dateToday}_${__timeToday}.log`;
     const logDir = path.join(__dirname, 'data', 'logs');
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true }); // Fixed deprecation warning for mkdirp.sync if needed
-    
-    logFilePath = path.join(logDir, logFileName);
+    mkdirp.sync(logDir); 
+    logFilePath = path.join(logDir, logFileName); 
     fs.writeFileSync(logFilePath, `Debug Log Created on ${__dateToday} at ${__timeToday}\n\n`);
     debugLogWriteToFile(`Debug logging started. Log file: ${logFilePath}`);
 }
@@ -80,10 +96,10 @@ function debugLogWriteToFile(message) {
     const timeToday = dayToday.toLocaleTimeString();
     const dateToday = dayToday.toLocaleDateString().replace(/\//g, '-');
     const logEntry = `[${dateToday} ${timeToday}] ${message}\n`;
-    fs.appendFileSync(logFilePath, logEntry);
+    fs.appendFileSync(logFilePath, logEntry); 
 }
 
-// Override console.log/error/warn 
+// Override console.log to also write to log file in debug mode
 console.error = function(message) {
     const dayToday = new Date();
     const timeToday = dayToday.toLocaleTimeString();
@@ -97,6 +113,7 @@ console.error = function(message) {
     }
 };
 
+// Also pass the warn to log
 console.warn = function(message) {
     const dayToday = new Date();
     const timeToday = dayToday.toLocaleTimeString();
@@ -110,15 +127,19 @@ console.warn = function(message) {
     }
 };
 
-// Process handlers
-process.on('exit', (code) => { 
-    debugLogWriteToFile(`Setup process exiting with code: ${code}`); 
+// Capture process terminations while on debug
+process.on('exit', (code) => {
+    debugLogWriteToFile(`Setup process exiting with code: ${code}`);
 })
-process.on('SIGINT', () => { 
-    debugLogWriteToFile("Setup process interrupted (SIGINT). Exiting..."); process.exit(0); 
+
+process.on('SIGINT', () => {
+    debugLogWriteToFile("Setup process interrupted (SIGINT). Exiting...");
+    process.exit(0);
 })
-process.on('uncaughtException', (err) => { 
-    debugLogWriteToFile(`Uncaught Exception: ${err.message}`); process.exit(1); 
+
+process.on('uncaughtException', (err) => {
+    debugLogWriteToFile(`Uncaught Exception: ${err.message}`);
+    process.exit(1);
 });
 
 
@@ -132,234 +153,307 @@ app.listen(PORT, () => {
     brkln('nl');
 })
 
-// --- POSTGRESQL DATABASE SETUP ---
-
-// Create the connection pool
+// Set the PostgreSQL DB
+// Configuration should ideally come from environment variables
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgres://admin:password123@localhost:5432/openattendance',
-    // ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    user: process.env.DB_USER || 'postgres',
+    host: process.env.DB_HOST || 'localhost',
+    database: process.env.DB_NAME || 'openattendance',
+    password: process.env.DB_PASSWORD || 'password',
+    port: process.env.DB_PORT || 5432,
 });
 
-// Test Connection
+// Test connection
 pool.connect((err, client, release) => {
     if (err) {
-        console.error(`Error acquiring client: ${err.message}`);
-        debugLogWriteToFile(`[PG]: Error acquiring client: ${err.message}`);
+        console.error(`Error connecting to the PostgreSQL database: ${err.message}`);
+        debugLogWriteToFile(`[POSTGRES]: Error connecting to database: ${err.message}`);
         return;
     }
-    client.query('SELECT NOW()', (err, result) => {
-        release();
-        if (err) {
-            console.error(`Error executing query: ${err.message}`);
-            debugLogWriteToFile(`[PG]: Error executing query: ${err.message}`);
-        } else {
-            console.log(`Successfully connected to PostgreSQL at: ${result.rows[0].now}`);
-            debugLogWriteToFile(`[PG]: Successfully connected to database.`);
-            
-            // Optional: Initialize Schema if tables don't exist
-            // initializeSchema(pool); 
+    release();
+    console.log(`Successfully connected to PostgreSQL`);
+    debugLogWriteToFile(`[POSTGRES]: Successfully connected to database.`);
+    
+    // Check if tables exist, if not, run schema
+    checkAndInitDB();
+});
+
+async function checkAndInitDB() {
+    try {
+        const res = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE  table_schema = 'public'
+                AND    table_name   = 'configurations'
+            );
+        `);
+        
+        if (!res.rows[0].exists) {
+            console.log('Database tables not found, creating new DB from schema');
+            debugLogWriteToFile('[POSTGRES]: Database tables not found, creating new database from schema');
+            const schemaPath = path.join(__dirname, 'database_schema.sql');
+            const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
+
+            await pool.query(schemaSql);
+            console.log(`Database Created and initialized successfully`);
+            debugLogWriteToFile(`[POSTGRES]: DB created and initialized successfully...`);
         }
+    } catch (err) {
+        console.error(`Error checking/initializing DB: ${err.message}`);
+        debugLogWriteToFile(`[POSTGRES]: Error checking/initializing DB: ${err.message}`);
+    }
+}
+
+
+// Function
+/*
+ * Prints Break Lines for casual readability
+ * @param {string} type of the breakline feature
+ * - nl: uses \n (New Line)
+ * - dl: uses ------ (Dashed Line)
+ * - el: uses ====== (Equal Line)
+ * @returns {void} Prints the break to console
+ */
+function brkln(type) {
+    switch (type) {
+        case 'nl':
+            return console.log('\n');
+        case 'dl':
+            return console.log('--------------------------');
+        case 'el':
+            return console.log('==========================');
+        default:
+            return console.log('\n');
+    }
+}
+
+// API Features
+
+// [SQL-BENCHMARK: SW]
+// We sequential write test
+app.post('/api/benchmark/sequential-write', (req, res) => {
+    // Postgres uses $1, $2, etc. RETURNING id is needed to get the inserted ID back.
+    const insert = 'INSERT INTO benchmark_test (col_text1, col_text2, col_int1) VALUES ($1, $2, $3) RETURNING id';
+    
+    pool.query(insert, ["seq_write", `random_text_${Math.random()}`, Math.floor(Math.random() * 1000)], (err, result) => {
+        if (err) {
+            res.status(500).json({
+                "error": err.message
+            });
+            debugLogWriteToFile(`[SQL-BENCHMARK: SW] : Benchmark Sequential write extreme fail. Error: ${err.message}`);
+            return console.error(err.message);
+        }
+        debugLogWriteToFile(`[SQL-BENCHMARK: SW]: Benchmark Sequential write success!`)
+        res.json({
+            message: "success",
+            id: result.rows[0].id // Accessed via rows array in PG
+        });
     });
 });
 
-// Helper for Schema Initialization (Converted from SQLite logic)
-async function initializeSchema(pool) {
-    try {
-        const schemaPath = path.join(__dirname, 'database_schema.sql');
-        if (fs.existsSync(schemaPath)) {
-            const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
-            await pool.query(schemaSql);
-            console.log(`Database initialized successfully from schema`);
-            debugLogWriteToFile(`[PG]: DB created and initialized successfully...`);
-        }
-    } catch (execErr) {
-        console.error(`Error Executing schema script: ${execErr.message}`);
-        debugLogWriteToFile(`[PG]: Error executing schema script: ${execErr.message}`);
-    }
-}
-
-
-function brkln(type) {
-    switch (type) {
-        case 'nl': return console.log('\n');
-        case 'dl': return console.log('--------------------------');
-        case 'el': return console.log('==========================');
-        default: return console.log('\n');
-    }
-}
-
-// --- API Features (Refactored for Postgres) ---
-
-// [SQL-BENCHMARK: SW]
-// Sequential Write Test
-app.post('/api/benchmark/sequential-write', async (req, res) => {
-    // PG Syntax: Use $1, $2 instead of ?
-    // PG Syntax: Use RETURNING id to get the inserted ID
-    const insert = 'INSERT INTO benchmark_test (col_text1, col_text2, col_int1) VALUES ($1, $2, $3) RETURNING id';
-    const values = ["seq_write", `random_text_${Math.random()}`, Math.floor(Math.random() * 1000)];
-
-    try {
-        const result = await pool.query(insert, values);
-        debugLogWriteToFile(`[SQL-BENCHMARK: SW]: Benchmark Sequential write success!`);
-        res.json({
-            message: "success",
-            id: result.rows[0].id // Accessed via RETURNING clause
-        });
-    } catch (err) {
-        debugLogWriteToFile(`[SQL-BENCHMARK: SW] : Benchmark Sequential write extreme fail. Error: ${err.message}`);
-        console.error(err.message);
-        res.status(500).json({ "error": err.message });
-    }
-});
-
 // [SQL-BENCHMARK: BW]
-// Bulk Write Test
+// We Bulk write
 app.post('/api/benchmark/bulk-write', async (req, res) => {
     const records = req.body.records;
-    if (!records || !Array.isArray(records)) {
-        return res.status(400).json({ error: "Invalid Payload, 'records' array not found..." });
+    if (!records || Array.isArray(records) === false) { // Fixed check
+        return res.status(400).json({
+            error: "Invalid Payload, 'records' array not found..."
+        })
     }
 
     const client = await pool.connect();
 
     try {
         debugLogWriteToFile("[SQL-BENCHMARK: BW]: BEGIN TRANSACTION");
-        await client.query('BEGIN'); // Start Transaction
-
+        await client.query('BEGIN');
+        
         const insertText = 'INSERT INTO benchmark_test (col_text1, col_text2, col_int1) VALUES ($1, $2, $3)';
         
-        // Loop through records
         for (const record of records) {
             await client.query(insertText, [record.col_text1, record.col_text2, record.col_int1]);
         }
 
-        await client.query('COMMIT'); // Commit Transaction
+        await client.query('COMMIT');
         debugLogWriteToFile(`[SQL-BENCHMARK: BW]: Success BulkWrite`);
-        
         res.json({
             message: "success",
             count: records.length
         });
     } catch (err) {
-        await client.query('ROLLBACK'); // Rollback on error
+        await client.query('ROLLBACK');
         debugLogWriteToFile(`[SQL-BENCHMARK: BW]: FAIL TO COMMIT: ${err.message}`);
+        res.status(500).json({
+            "error": err.message
+        });
         console.error(err.message);
-        res.status(500).json({ "error": err.message });
     } finally {
-        client.release(); // IMPORTANT: Release client back to pool
+        client.release();
     }
 });
 
 // [CRT_ADM]
 // Creating admin account
-app.post('/api/setup/create-admin', async (req, res) => {
+app.post('/api/setup/create-admin', (req, res) => {
     const { username, password } = req.body;
+    // We check if the API got the username and password before proceeding...
     if (!username || !password) {
-        debugLogWriteToFile(`[CRT_ADM]: Admin creation failed... Username/Password missing`);
-        return res.status(400).json({ error: 'Username and Password are required.' });
+        // Failed, because its blank, probably format error.
+        debugLogWriteToFile(`[CRT_ADM]: Admin creation failed... Username and Password was not provided to Endpoint`);
+        return res.status(400).json({
+            error: 'Username and Password are required.'
+        });
     }
-
-    try {
-        // Check for existing admin
-        const checkRes = await pool.query('SELECT COUNT(*) as count FROM admin_login'); // Assuming table exists
-        // Note: Postgres returns count as string (bigint), need to parse
-        if (parseInt(checkRes.rows[0].count) > 0) {
+    
+    // We check if an account already exists
+    // Note: The provided schema does not have 'admin_login', but 'staff_login'. 
+    // Assuming 'admin_login' exists or using 'staff_login' logic as per request context.
+    // Using $1 for params.
+    pool.query('SELECT COUNT(*)::int as count FROM admin_login', (err, result) => {
+        if (err) {
+            debugLogWriteToFile(`[CRT_ADM]: Error checking for possible duplicate admin account, are you sure that the database is ok? Raw error: ${err.message}`);
+            return res.status(500).json({
+                error: 'Database error while checking for existing admin'
+            });
+        }
+        
+        // Postgres returns count as string usually, or we cast it in SQL
+        if (result.rows[0].count > 0) {
             debugLogWriteToFile(`[CRT_ADM]: Admin account creation halted, account already exists!`);
-            return res.status(409).json({ error: 'An admin account already exists!!!' });
+            return res.status(409).json({
+                error: 'An admin account already exists!!!'
+            });
         }
 
-        // Hash Password
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        // Insert
-        const insert = 'INSERT INTO admin_login (username, password) VALUES ($1, $2) RETURNING login_id'; // Assuming 'login_id' is PK
-        const insertRes = await pool.query(insert, [username, hashedPassword]);
-
-        debugLogWriteToFile(`[CRT-ADM]: Admin account successfully created with ID: ${insertRes.rows[0].login_id}`);
-        res.json({
-            message: 'Admin account successfully created',
-            id: insertRes.rows[0].login_id
+        bcrypt.hash(password, 10, (hashErr, hashedPassword) => {
+            if (hashErr) {
+                debugLogWriteToFile(`[CRT_ADM - CRITICAL!]: BCrypt Error! SOMETHING WENT WRONG WITH BCRYPT!: ${hashErr.message}`);
+                return res.status(500).json({
+                    error: 'Failed to hash password'
+                });
+            }
+            
+            // Assuming admin_login has an ID column, adding RETURNING id
+            const insert = 'INSERT INTO admin_login (username, password) VALUES ($1, $2) RETURNING id';
+            pool.query(insert, [username, hashedPassword], (dbErr, result) => {
+                if (dbErr) {
+                    debugLogWriteToFile(`[CRT-ADM]: DB Error on admin creation: ${dbErr.message}`);
+                    return res.status(500).json({
+                        error: dbErr.message
+                    });
+                }
+                
+                // Assuming ID is returned
+                const newId = result.rows[0].id;
+                debugLogWriteToFile(`[CRT-ADM]: Admin account successfully creeated with ID: ${newId}`);
+                res.json({
+                    message: 'Admin account successfuly created',
+                    id: newId
+                });
+            });
         });
-
-    } catch (err) {
-        debugLogWriteToFile(`[CRT_ADM]: Error: ${err.message}`);
-        res.status(500).json({ error: err.message });
-    }
+    });
 });
 
 // [CLNP]
 // Cleanup benchmark traces
-app.post('/api/benchmark/cleanup', async (req, res) => {
-    try {
-        // TRUNCATE is faster than DELETE in Postgres and resets auto-increment if RESTART IDENTITY is used
-        const result = await pool.query('TRUNCATE TABLE benchmark_test RESTART IDENTITY');
+app.post('/api/benchmark/cleanup', (req, res) => {
+    // In Postgres, TRUNCATE with RESTART IDENTITY is more efficient and resets sequences
+    pool.query('TRUNCATE benchmark_test RESTART IDENTITY', (err, result) => {
+        if (err) {
+            debugLogWriteToFile(`[CLNP]: Cleanup runs failed... ${err.message}`)
+            return res.status(500).json({
+                "error": err.message
+            });
+        }
         
         debugLogWriteToFile(`[CLNP]: Cleanup complete for benchmark_test.`);
         res.json({
-            message: "success",
-            note: "Table truncated and identity reset"
+            message: "success", 
+            deleted_rows: "All (Truncated)"
         });
-    } catch (err) {
-        debugLogWriteToFile(`[CLNP]: Cleanup runs failed... ${err.message}`);
-        res.status(500).json({ "error": err.message });
-    }
+    });
 });
 
 // [SQL-BENCHMARK RA]
 // SQL Benchmark read-all
-app.get('/api/benchmark/read-all', async (req, res) => {
-    try {
-        const result = await pool.query("SELECT id FROM benchmark_test");
+app.get('/api/benchmark/read-all', (req, res) => {
+    pool.query("SELECT id FROM benchmark_test", [], (err, result) => {
+        if (err) {
+            debugLogWriteToFile(`[SQL-BENCHMARK RA]: Benchmark ReadAll Failure: ${err.message}`)
+            res.status(500).json({
+                "error": err.message
+            });
+            return console.error(err.message);
+        }
         res.json({
             message: "success",
-            data: result.rows
+            data: result.rows // Use .rows
         });
-    } catch (err) {
-        debugLogWriteToFile(`[SQL-BENCHMARK RA]: Benchmark ReadAll Failure: ${err.message}`);
-        console.error(err.message);
-        res.status(500).json({ "error": err.message });
-    }
+    });
 });
 
 // [VA-ADMIN]
 // Admin validation
-app.post('/api/setup/validate-admin', async (req, res) => {
+app.post('/api/setup/validate-admin', (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password are not provided' });
+        debugLogWriteToFile(`[VA-ADMIN]: Admin validation failed, username or password not provided`);
+        return res.status(400).json({
+            error: 'Username and password are not provided'
+        });
     }
-
-    try {
-        const query = 'SELECT * FROM admin_login WHERE username = $1';
-        const result = await pool.query(query, [username]);
+    const query = 'SELECT * FROM admin_login WHERE username = $1';
+    pool.query(query, [username], (err, result) => {
+        if (err) {
+            debugLogWriteToFile(`[VA-ADMIN] CRITICAL: DB Error on admin validation: ${err.message} `);
+            return res.status(500).json({
+                error: `Database error during validation: ${err.message}`
+            })
+        }
+        
         const admin = result.rows[0];
 
         if (!admin) {
-            debugLogWriteToFile(`[VA-ADMIN]: Admin validation failed, user '${username}' not found`);
-            return res.status(500).json({ error: 'User not found' });
+            debugLogWriteToFile(`[VA-ADMIN]: Admin validation failed, user '${username}' was not found in the database records for administator`);
+            return res.status(500).json({
+                error: 'Database error during validation, probably records arent being written or you just immediately pressed verification without adding the account.'
+            });
         }
 
-        const isMatch = await bcrypt.compare(password, admin.password);
-        
-        if (isMatch) {
-            debugLogWriteToFile(`[VA-ADMIN]: Credentials are good/verified...`);
-            res.json({ success: true, message: 'Admin credentials are valid' });
-        } else {
-            debugLogWriteToFile(`[VA-ADMIN]: Password mismatch`);
-            res.status(401).json({ success: false, error: 'Invalid credentials' });
-        }
-    } catch (err) {
-        debugLogWriteToFile(`[VA-ADMIN] CRITICAL: Error: ${err.message}`);
-        res.status(500).json({ error: `Validation error: ${err.message}` });
-    }
+        bcrypt.compare(password, admin.password, (compareErr, isMatch) => {
+            if (compareErr) {
+                debugLogWriteToFile(`[VA-ADMIN] CRITICAL: Bcrypt compare error: ${compareErr.message}`);
+                return res.status(500).json({
+                    error: 'Error during password comparison on bcrypt side...'
+                });
+            }
+            if (isMatch) {
+                debugLogWriteToFile(`[VA-ADMIN]: Credentials are good/verified...`)
+                res.json({
+                    success: true,
+                    message: 'Admin credentials are valid'
+                })
+            } else {
+                debugLogWriteToFile(`[VA-ADMIN]: Admin credentials during verification did not match at all... Are you sure you inputted the correct letters?`)
+                res.status(401).json({
+                    success: false,
+                    error: 'Invalid credentials'
+                });
+            }
+        });
+    });
 });
 
 // [MULTER-UPD]
-// Multer Configuration (Kept Identical)
+// Multer Configuration Component
+// LOGO STORAGE
 const logoStorage = multer.diskStorage({
-    destination: function (req, file, cb) { cb(null, logoUploadDir); },
+    destination: function (req, file, cb) {
+        cb(null, logoUploadDir);
+    },
     filename: function (req, file, cb) {
+        // Create a unique filename to avoid any possible overwrites!
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
     }
@@ -368,28 +462,45 @@ const logoStorage = multer.diskStorage({
 const upload = multer({
     storage: logoStorage,
     fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/')) { cb(null, true); } 
-        else { cb(new Error('ONLY IMAGE FILES ARE ALLOWED!!! (PNG/JPG/JPEG)'), false); }
+        // Accept only image files!
+        if (file.mimetype.startsWith('image/')) {
+            cb(null, true);
+        } else {
+            cb(new Error('ONLY IMAGE FILES ARE ALLOWED!!! (PNG/JPG/JPEG)'), false);
+        }
     }
-}).single('logo_file');
+}).single('logo_file'); // logo_file is the name of input field in the form
 
 // [CONF]
 // Configure
-app.post('/api/setup/configure', upload, async (req, res) => {
+app.post('/api/setup/configure', upload, (req, res) => {
+    // By placing upload here, multer can already process these request
+    // req.body is populated with text fields
+    // and req.file should have the file.
+
     const { school_name, school_type, address, organization_hotline, country_code } = req.body;
-    const logo_directory = req.file ? `/assets/images/logos/${req.file.filename}` : null;
+    const logo_directory = req.file ? `/assets/images/logos/${req.file.filename}`: null;
 
     if (!school_name || !country_code) {
-        debugLogWriteToFile('[CONF]: Configuration save failed, missing fields.');
-        return res.status(400).json({ error: 'School name or country code are required...' });
+        debugLogWriteToFile('[CONF]: Configuration save failed, school name or country code was not provided at all.');
+        return res.status(400).json({
+            error: 'School name or country code are required...'
+        });
     }
-
-    try {
-        // Check duplicate
-        const checkRes = await pool.query('SELECT COUNT(*) as count FROM configurations');
-        if (parseInt(checkRes.rows[0].count) > 0) {
-            debugLogWriteToFile(`[CONF]: Configuration Blocked: Entry exists`);
-            return res.status(409).json({ error: 'Configuration entry already exists, abort.' });
+    // Check if a configuration already exists
+    pool.query('SELECT COUNT(*)::int as count FROM configurations', (dbErr, result) => {
+        if (dbErr) {
+            debugLogWriteToFile(`[CONF]: Error checking to the database for possible duplicate configurations. Error: ${dbErr.message}`);
+            return res.status(500).json({
+                error: 'Database Error while checking for existing configuration'
+            });
+        }
+        
+        if (result.rows[0].count > 0) {
+            debugLogWriteToFile(`[CONF]: Configuration Blocked: A configuration entry already exists`);
+            return res.status(409).json({
+                error: 'Configuration entry already exists, abort.'
+            });
         }
 
         const insert = `
@@ -397,93 +508,72 @@ app.post('/api/setup/configure', upload, async (req, res) => {
                 school_name, school_type, address, logo_directory, organization_hotline, country_code
             ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING config_id
         `;
-        const params = [school_name, school_type || null, address || null, logo_directory, organization_hotline || null, country_code];
 
-        const insertRes = await pool.query(insert, params);
+        const params = [school_name , school_type || null, address || null, logo_directory , organization_hotline || null , country_code]
 
-        debugLogWriteToFile(`[CONF]: Configuration saved successfully with the ID: ${insertRes.rows[0].config_id}`);
-        res.json({
-            message: 'Configuration saved successfully.',
-            id: insertRes.rows[0].config_id
+        pool.query(insert, params, (insertErr, result) => {
+            if (insertErr) {
+                debugLogWriteToFile(`[CONF] ERROR: Database error on config creation: ${insertErr.message}`);
+                return res.status(500).json({
+                    error: insertErr.message
+                });
+            }
+            
+            const newId = result.rows[0].config_id;
+            debugLogWriteToFile(`[CONF]: Configuration saved successfully with the ID: ${newId}`);
+            res.json({
+                message: 'Configuration saved successfully.',
+                id: newId
+            });
         });
-
-    } catch (err) {
-        debugLogWriteToFile(`[CONF] ERROR: ${err.message}`);
-        res.status(500).json({ error: err.message });
-    }
+    });
 });
 
 // [VERI_SCHEMA]
-// Verifying schema DB creation and verification (Postgres Version)
+// Verifying schema DB creation and verification
 app.get('/api/setup/verify-schema', async (req, res) => {
     debugLogWriteToFile(`[VERI_SCHEMA]: Starting DB schema creation and verification...`);
     try {
+        // 1. Read the entire schema
         const schemaPath = path.join(__dirname, 'database_schema.sql');
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
-        // 1. Execute Schema
+        // 2. Execute the entire script at once
         await pool.query(schemaSql);
         debugLogWriteToFile(`[VERI_SCHEMA]: Schema script executed successfully.`);
 
-        // 2. Extract Table Names from SQL (Regex approach)
-        const expectedTableNames = (schemaSql.match(/CREATE TABLE IF NOT EXISTS\s+(\w+)/gi) || [])
-            .map(s => {
-                const match = s.match(/CREATE TABLE IF NOT EXISTS\s+(\w+)/i);
-                return match ? match[1] : null;
-            }).filter(Boolean);
+        // 3. We confirm that all table should exist
+        const expectedTableNames = (schemaSql.match(/CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/gi) || [])
+            .map(s => s.match(/CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/i)[1]);
         
-        // 3. Check information_schema (Postgres method to list tables)
-        const dbTablesRes = await pool.query(`
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public'
-        `);
-        const actualTables = dbTablesRes.rows.map(t => t.table_name);
+        // Postgres-specific table check
+        const getTables = async () => {
+             const res = await pool.query(`
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public'
+             `);
+             return res.rows.map(r => r.table_name);
+        };
+
+        const actualTables = await getTables();
 
         const actions = expectedTableNames.map(table => ({
             table: table,
-            status: actualTables.includes(table) ? 'exists' : 'missing'
+            status: actualTables.includes(table) ? 'exists': 'missing'
         }));
 
         const allTablesExist = actions.every(a => a.status === 'exists');
         debugLogWriteToFile('[VERI_SCHEMA]: Schema verification process complete.')
         res.json({
-            success: allTablesExist,
+            sucess: allTablesExist,
             actions: actions
         });
-
     } catch (error) {
         debugLogWriteToFile(`[VERI_SCHEMA] FATAL: Schema verification failed... ${error.message}`);
         res.status(500).json({
             error: 'Failed to verify DB schema',
             details: error.message
         });
-    }
-});
-
-// Add students
-app.post('/api/students/add', async (req, res) => {
-    const { first_name, last_name, student_id } = req.body;
-    
-    // Generate a secure, random token for the QR code
-    const qrToken = crypto.randomUUID(); 
-
-    const query = `
-        INSERT INTO students (first_name, last_name, student_id, qr_code_token)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-    `;
-    
-    try {
-        const result = await pool.query(query, [first_name, last_name, student_id, qrToken]);
-        
-        res.json({
-            message: "Student added",
-            student: result.rows[0],
-            // The frontend can now use this token to generate the QR image
-            qr_data: result.rows[0].qr_code_token 
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
     }
 });

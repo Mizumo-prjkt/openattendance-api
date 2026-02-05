@@ -236,7 +236,7 @@ Content-Type: multipart/form-data
   "sucess": true,
   "actions": [
     {
-      "table": "admin_login",
+      "table": "staff_login",
       "status": "exists"
     },
     {

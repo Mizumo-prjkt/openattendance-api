@@ -579,7 +579,7 @@ ORDER BY name;
 ✅ **Check Constraints:** Data validation at database level  
 ✅ **Composite Keys:** Complex uniqueness rules (e.g., per-student per-slot logs)  
 
-### Recommendations
+### Future Notings
 
 ⚠️ **Singleton Pattern:** For SMS settings, consider application-level enforcement instead of database check  
 ⚠️ **Date Fields:** Consider standardizing date storage (use TIMESTAMP for consistency)  

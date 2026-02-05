@@ -2,16 +2,45 @@
 
 ## Base URL
 ```
-http://localhost:{PORT}
+http://localhost:8080
 ```
-Default PORT: `10002` (or as defined in environment variable `PORT`)
+**Note:** PORT is currently hardcoded as `8080`. To change it, modify the `PORT` constant in `server.js`, or create an `.env` file and add a `PORT` variable.
 
 ---
 
 ## Table of Contents
-1. [Setup Endpoints](#setup-endpoints)
-2. [Benchmark Endpoints](#benchmark-endpoints)
-3. [Student Endpoints](#student-endpoints)
+1. [Database Configuration](#database-configuration)
+2. [Setup Endpoints](#setup-endpoints)
+3. [Benchmark Endpoints](#benchmark-endpoints)
+4. [Student Endpoints](#student-endpoints)
+
+---
+
+## Database Configuration
+
+### Environment Variables
+
+The application requires PostgreSQL connection details via environment variables in `.env` file:
+
+```env
+DB_USER=postgres
+DB_HOST=localhost
+DB_NAME=openattendance
+DB_PASSWORD=password
+DB_PORT=5432
+```
+
+**Default Values:**
+- `DB_USER`: postgres
+- `DB_HOST`: localhost
+- `DB_NAME`: openattendance
+- `DB_PASSWORD`: password
+- `DB_PORT`: 5432
+
+**Auto-Initialization:**
+- On first run, the API automatically checks if database tables exist
+- If tables don't exist, it creates them from `database_schema.sql`
+- This ensures the database is ready for use
 
 ---
 
@@ -60,7 +89,13 @@ Content-Type: application/json
 **Response Error (500):**
 ```json
 {
-  "error": "Error message details"
+  "error": "Database error while checking for existing admin"
+}
+```
+or
+```json
+{
+  "error": "Failed to hash password"
 }
 ```
 
@@ -110,7 +145,13 @@ Content-Type: application/json
 **Response Error (500):**
 ```json
 {
-  "error": "Validation error: Error message details"
+  "error": "Database error during validation: Error message details"
+}
+```
+or
+```json
+{
+  "error": "Error during password comparison on bcrypt side..."
 }
 ```
 
@@ -179,7 +220,7 @@ Content-Type: multipart/form-data
 **Response Success (200):**
 ```json
 {
-  "success": true,
+  "sucess": true,
   "actions": [
     {
       "table": "admin_login",
@@ -196,6 +237,8 @@ Content-Type: multipart/form-data
   ]
 }
 ```
+
+**Note:** Response field is `sucess` (typo in implementation - should be `success`)
 
 **Response Error (500):**
 ```json
@@ -348,7 +391,7 @@ Content-Type: application/json
 ```json
 {
   "message": "success",
-  "note": "Table truncated and identity reset"
+  "deleted_rows": "All (Truncated)"
 }
 ```
 
@@ -422,12 +465,16 @@ All endpoints follow standard HTTP status codes:
 
 ## Notes
 
-- All timestamps are managed in UTC and converted to local time in logs
-- Passwords are hashed using bcrypt with 10 salt rounds
-- Images uploaded must be PNG, JPG, or JPEG format
-- QR tokens are generated as secure UUIDs
-- Database uses PostgreSQL with connection pooling
-- Debug mode can be enabled with `--debug` flag for extended logging
+- **Server Port:** Currently hardcoded to `8080`
+- **Database:** PostgreSQL with automatic schema initialization on first run
+- **Environment Variables:** Required for database connection (see Database Configuration section)
+- **Timestamps:** Managed in UTC and converted to local time in logs
+- **Passwords:** Hashed using bcrypt with 10 salt rounds
+- **Image Uploads:** Accepted formats are PNG, JPG, JPEG only
+- **QR Tokens:** Generated as secure UUIDs
+- **Transactions:** Bulk operations use database transactions with automatic rollback on error
+- **Debug Mode:** Enable with `--debug` flag for extended logging (creates logs in `data/logs/`)
+- **Callback-Based:** Uses callback-style async (not Promise-based)
 
 ---
 
@@ -435,28 +482,28 @@ All endpoints follow standard HTTP status codes:
 
 ### Creating Admin Account
 ```bash
-curl -X POST http://localhost:10002/api/setup/create-admin \
+curl -X POST http://localhost:8080/api/setup/create-admin \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "SecurePass123"}'
 ```
 
 ### Validating Admin
 ```bash
-curl -X POST http://localhost:10002/api/setup/validate-admin \
+curl -X POST http://localhost:8080/api/setup/validate-admin \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "SecurePass123"}'
 ```
 
 ### Adding a Student
 ```bash
-curl -X POST http://localhost:10002/api/students/add \
+curl -X POST http://localhost:8080/api/students/add \
   -H "Content-Type: application/json" \
   -d '{"first_name": "John", "last_name": "Doe", "student_id": "STU001"}'
 ```
 
 ### Configuring School
 ```bash
-curl -X POST http://localhost:10002/api/setup/configure \
+curl -X POST http://localhost:8080/api/setup/configure \
   -F "school_name=ABC School" \
   -F "country_code=US" \
   -F "school_type=Secondary" \
@@ -465,7 +512,19 @@ curl -X POST http://localhost:10002/api/setup/configure \
   -F "logo_file=@/path/to/logo.png"
 ```
 
+### Running Sequential Write Benchmark
+```bash
+curl -X POST http://localhost:8080/api/benchmark/sequential-write \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### Verifying Database Schema
+```bash
+curl -X GET http://localhost:8080/api/setup/verify-schema
+```
+
 ---
 
-**Last Updated:** February 3, 2026  
-**API Version:** Based on server.js implementation
+**Last Updated:** February 5, 2026  
+**API Version:** Updated for PostgreSQL callback-based implementation

@@ -434,6 +434,9 @@ app.get('/api/students/list', async (req, res) => {
                 classroom_section as section, 
                 gender,
                 status, 
+                emergency_contact_name,
+                emergency_contact_phone,
+                emergency_contact_relationship,
                 profile_image_path as profile_image 
             FROM students 
             ORDER BY last_name ASC
@@ -450,7 +453,7 @@ app.get('/api/students/list', async (req, res) => {
 
 // Add student
 app.post('/api/students/add', async (req, res) => {
-    const { student_id, first_name, last_name, section, gender, status, profile_image } = req.body;
+    const { student_id, first_name, last_name, section, gender, status, profile_image, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -466,11 +469,11 @@ app.post('/api/students/add', async (req, res) => {
         }
 
         const query = `
-            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
         `;
-        await client.query(query, [student_id, first_name, last_name, section, gender, status || 'Active', imagePath]);
+        await client.query(query, [student_id, first_name, last_name, section, gender, status || 'Active', imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
@@ -484,7 +487,7 @@ app.post('/api/students/add', async (req, res) => {
 
 // Update student
 app.put('/api/students/update', async (req, res) => {
-    const { id, student_id, first_name, last_name, section, gender, status, profile_image } = req.body;
+    const { id, student_id, first_name, last_name, section, gender, status, profile_image, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -501,10 +504,10 @@ app.put('/api/students/update', async (req, res) => {
 
         const query = `
             UPDATE students 
-            SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, gender = $5, status = $6, profile_image_path = $7
-            WHERE id = $8
+            SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, gender = $5, status = $6, profile_image_path = $7, emergency_contact_name = $8, emergency_contact_phone = $9, emergency_contact_relationship = $10
+            WHERE id = $11
         `;
-        await client.query(query, [student_id, first_name, last_name, section, gender, status, imagePath, id]);
+        await client.query(query, [student_id, first_name, last_name, section, gender, status, imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, id]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

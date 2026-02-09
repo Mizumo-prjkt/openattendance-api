@@ -18,6 +18,9 @@ ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS sms_enabled BOOLEAN D
 -- 2. Update students
 ALTER TABLE students ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive'));
 ALTER TABLE students ADD COLUMN IF NOT EXISTS gender TEXT CHECK (gender IN ('Male', 'Female', 'Other'));
+ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian'));
 
 
 -- 3. Update configurations

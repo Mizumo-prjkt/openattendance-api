@@ -30,6 +30,8 @@ const { DESTRUCTION } = require('dns');
 const NTP = require('ntp-time');
 const os = require('os');
 const checkDiskSpace = require('check-disk-space').default;
+const http = require('http');
+const { Server } = require('socket.io');
 const multer = require('multer'); // Added missing requirement based on code usage
 
 // Initial
@@ -40,6 +42,16 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({
     extended: true
 }));
+
+// Initialize Socket.io
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
 
 // Additional proceedures before we continue
 // Create a directory for logo uploads if it doesn't exist
@@ -149,6 +161,19 @@ process.on('uncaughtException', (err) => {
 });
 
 
+// Socket.io Connection Handler
+io.on('connection', (socket) => {
+    debugLogWriteToFile(`[SOCKET]: Client Connected: ${socket.id}`);
+    socket.on('disconnect', () => {
+        debugLogWriteToFile(`[SOCKET]: Client Disconnected: ${socket.id}`);
+    });
+    // Allow other clients to request an immediate refresh
+    socket.on('request_dashboard_refresh', () => {
+        debugLogWriteToFile(`[SOCKET]: Empty Trigger in dev mode...`);
+    });
+});
+
+// Start the server!
 app.listen(PORT, () => {
     brkln('nl');
     brkln('el');
@@ -157,7 +182,7 @@ app.listen(PORT, () => {
     console.log(`For developers, please check the documentation...`);
     brkln('el');
     brkln('nl');
-})
+});
 
 // Set the PostgreSQL DB
 // Configuration should ideally come from environment variables

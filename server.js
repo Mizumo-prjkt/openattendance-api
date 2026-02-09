@@ -69,6 +69,12 @@ if (!fs.existsSync(tmpDir)) {
     fs.mkdirSync(tmpDir, { recursive: true });
 }
 
+// Create a directory for student profile image uploads
+const studentImageUploadDir = path.join(__dirname, 'runtime/shared/images/student_profiles');
+if (!fs.existsSync(studentImageUploadDir)) {
+    fs.mkdirSync(studentImageUploadDir, { recursive: true });
+}
+
 
 // DebugWriteToFile function
 // From @MizProject/Mitra setup.js
@@ -413,6 +419,117 @@ app.get('/api/benchmark/read-all', (req, res) => {
         });
     });
 });
+
+// [STUDENTS]
+// Get all students
+app.get('/api/students/list', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT 
+                id, 
+                student_id, 
+                first_name, 
+                last_name, 
+                classroom_section as section, 
+                status, 
+                profile_image_path as profile_image 
+            FROM students 
+            ORDER BY last_name ASC
+        `;
+        const result = await client.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[STUDENTS] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add student
+app.post('/api/students/add', async (req, res) => {
+    const { student_id, first_name, last_name, section, status, profile_image } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        let imagePath = null;
+        if (profile_image && profile_image.startsWith('data:image')) {
+             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+             const buffer = Buffer.from(base64Data, 'base64');
+             const fileName = `student_${student_id}_${Date.now()}.png`;
+             const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
+             fs.writeFileSync(filePath, buffer);
+             imagePath = `/assets/images/student_profiles/${fileName}`;
+        }
+
+        const query = `
+            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, profile_image_path)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        `;
+        await client.query(query, [student_id, first_name, last_name, section, status || 'Active', imagePath]);
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        debugLogWriteToFile(`[STUDENTS] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Update student
+app.put('/api/students/update', async (req, res) => {
+    const { id, student_id, first_name, last_name, section, status, profile_image } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        let imagePath = profile_image; 
+        if (profile_image && profile_image.startsWith('data:image')) {
+             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+             const buffer = Buffer.from(base64Data, 'base64');
+             const fileName = `student_${student_id}_${Date.now()}.png`;
+             const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
+             fs.writeFileSync(filePath, buffer);
+             imagePath = `/assets/images/student_profiles/${fileName}`;
+        }
+
+        const query = `
+            UPDATE students 
+            SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, status = $5, profile_image_path = $6
+            WHERE id = $7
+        `;
+        await client.query(query, [student_id, first_name, last_name, section, status, imagePath, id]);
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        debugLogWriteToFile(`[STUDENTS] UPDATE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Delete student
+app.delete('/api/students/delete', async (req, res) => {
+    const { id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM students WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[STUDENTS] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 
 // [VA-ADMIN]
 // Admin validation

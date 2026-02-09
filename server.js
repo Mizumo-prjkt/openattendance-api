@@ -670,6 +670,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
 // [ANALYTICS]
 // Detailed Analytics Endpoint
 app.get('/api/dashboard/analytics', async (req, res) => {
+    const { filter_type, filter_Value } = req.query;
     const client = await pool.connect();
     try {
         // 1. Kiosk Performance (Scans by Staff/Kiosk Account)
@@ -710,16 +711,31 @@ app.get('/api/dashboard/analytics', async (req, res) => {
         });
 
         // Helper to calculate leaderboard
-        const getLeaderboard = async (interval) => {
+        const getLeaderboard = async (interval, customFilter = null) => {
+            let timeCondition;
+            const params = [];
+            if (customFilter) {
+                if (customFilter.type === 'month') {
+                    // To filter: YYYY-MM
+                    timeCondition = `to_Char(p.time_in, 'YYYY-MM') = $1`;
+                    params.push(customFilter.value);
+                } else if (customFilter.type === 'week') {
+                    // To filter: YYYY-Www
+                    timeCondition = `to_Char(p.time_in, 'IYYY-"W"IW') = $1`;
+                    params.push(customFilter.value);
+                }
+            } else {
+                timeCondition = `p.time_in >= CURRENT_DATE - INTERVAL '${interval}'`;
+            }
             const query = `
                 SELECT s.classroom_section, COUNT(p.present_id) as present_count
                 FROM present p
                 JOIN students s ON p.student_id = s.student_id
-                WHERE p.time_in >= CURRENT_DATE - INTERVAL '${interval}'
+                WHERE ${timeCondition}
                 AND s.classroom_section IS NOT NULL
                 GROUP BY s.classroom_section
             `;
-            const res = await client.query(query);
+            const res = await client.query(query, params);
             
             return res.rows.map(row => {
                 const section = row.classroom_section;
@@ -735,8 +751,21 @@ app.get('/api/dashboard/analytics', async (req, res) => {
             }).sort((a, b) => b.present - a.present);
         };
 
-        const leaderboardWeek = await getLeaderboard('7 days');
-        const leaderboardMonth = await getLeaderboard('30 days');
+        let leaderboardWeek = [];
+        let leaderboardMonth = [];
+
+        if (filter_type && filter_value) {
+            // If filtering, we populate the specific slot requested
+            if (filter_type === 'week') {
+                leaderboardWeek = await getLeaderboard(null, { type: 'week', value: filter_value });
+            } else if (filter_type === 'month') {
+                leaderboardMonth = await getLeaderboard(null, { type: 'month', value: filter_value });
+            }
+        } else {
+            // Default behavior
+            leaderboardWeek = await getLeaderboard('7 days');
+            leaderboardMonth = await getLeaderboard('30 days');
+        }
 
         res.json({
             kioskPerformance: {

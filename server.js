@@ -736,3 +736,31 @@ app.get('/api/dashboard/analytics', async (req, res) => {
         client.release();
     }
 });
+
+// [MIGRATE]
+// Database Migration Endpoint
+app.post('/api/setup/migrate', async (req, res) => {
+    debugLogWriteToFile(`[MIGRATE]: Starting database migration...`);
+    const client = await pool.connect();
+    try {
+        const migrationPath = path.join(__dirname, 'database_migration.sql');
+        if (!fs.existsSync(migrationPath)) {
+             throw new Error("Migration file not found!");
+        }
+        const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+        
+        await client.query(migrationSql);
+        
+        debugLogWriteToFile(`[MIGRATE]: Migration executed successfully.`);
+        res.json({
+            message: "Migration executed successfully."
+        });
+    } catch (err) {
+        debugLogWriteToFile(`[MIGRATE] ERROR: ${err.message}`);
+        res.status(500).json({
+            error: `Migration failed: ${err.message}`
+        });
+    } finally {
+        client.release();
+    }
+});

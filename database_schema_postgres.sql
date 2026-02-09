@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS students (
     student_id TEXT NOT NULL UNIQUE,
     qr_code_token TEXT UNIQUE,
     profile_image_path TEXT,
-    classroom_section TEXT
+    classroom_section TEXT,
+    status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive'))
 );
 
 -- 3. Configurations
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS configurations (
     config_id SERIAL PRIMARY KEY,
     school_name TEXT NOT NULL,
     school_type TEXT CHECK (school_type IN ('public', 'private', 'charter', 'international')),
+    school_id TEXT,
     address TEXT,
     logo_directory TEXT,
     organization_hotline TEXT,
@@ -159,7 +161,39 @@ CREATE TABLE IF NOT EXISTS system_logs (
 -- 13. SMS Provider Settings
 CREATE TABLE IF NOT EXISTS sms_provider_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
+    provider_type TEXT CHECK (provider_type IN ('api', 'usb')),
     provider_name TEXT NOT NULL,
+    api_url TEXT,
+    api_key TEXT,
     sender_name TEXT,
+    tty_path TEXT,
+    baud_rate INTEGER,
+    message_template TEXT,
+    curl_config_json JSONB,
+    sms_enabled BOOLEAN DEFAULT FALSE,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 14. Sections (Classes)
+CREATE TABLE IF NOT EXISTS sections (
+    section_id SERIAL PRIMARY KEY,
+    section_name TEXT NOT NULL UNIQUE,
+    adviser_staff_id TEXT,
+    room_number TEXT,
+    schedule_data JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id)
+);
+
+-- 15. SMS Logs
+CREATE TABLE IF NOT EXISTS sms_logs (
+    sms_id SERIAL PRIMARY KEY,
+    recipient_number TEXT NOT NULL,
+    recipient_name TEXT,
+    related_student_id TEXT,
+    message_body TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'pending')),
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    error_message TEXT,
+    FOREIGN KEY (related_student_id) REFERENCES students(student_id)
 );

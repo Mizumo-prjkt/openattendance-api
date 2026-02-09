@@ -645,3 +645,94 @@ app.get('/api/dashboard/overview', async (req, res) => {
         client.release();
     }
 });
+
+
+// [ANALYTICS]
+// Detailed Analytics Endpoint
+app.get('/api/dashboard/analytics', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        // 1. Kiosk Performance (Scans by Staff/Kiosk Account)
+        // Daily
+        const kioskDailyQuery = `
+            SELECT sa.name, COUNT(p.present_id) as scan_count
+            FROM present p
+            JOIN staff_accounts sa ON p.staff_id = sa.staff_id
+            WHERE p.time_in::date = CURRENT_DATE
+            GROUP BY sa.name
+            ORDER BY scan_count DESC
+        `;
+        const kioskDailyRes = await client.query(kioskDailyQuery);
+
+        // Weekly
+        const kioskWeeklyQuery = `
+            SELECT sa.name, COUNT(p.present_id) as scan_count
+            FROM present p
+            JOIN staff_accounts sa ON p.staff_id = sa.staff_id
+            WHERE p.time_in >= CURRENT_DATE - INTERVAL '7 days'
+            GROUP BY sa.name
+            ORDER BY scan_count DESC
+        `;
+        const kioskWeeklyRes = await client.query(kioskWeeklyQuery);
+
+        // 2. Classroom Leaderboard
+        // First, get total students per section to calculate percentage
+        const sectionTotalsQuery = `
+            SELECT classroom_section, COUNT(*) as total_students
+            FROM students
+            WHERE status = 'Active' AND classroom_section IS NOT NULL
+            GROUP BY classroom_section
+        `;
+        const sectionTotalsRes = await client.query(sectionTotalsQuery);
+        const sectionTotals = {};
+        sectionTotalsRes.rows.forEach(row => {
+            sectionTotals[row.classroom_section] = parseInt(row.total_students);
+        });
+
+        // Helper to calculate leaderboard
+        const getLeaderboard = async (interval) => {
+            const query = `
+                SELECT s.classroom_section, COUNT(p.present_id) as present_count
+                FROM present p
+                JOIN students s ON p.student_id = s.student_id
+                WHERE p.time_in >= CURRENT_DATE - INTERVAL '${interval}'
+                AND s.classroom_section IS NOT NULL
+                GROUP BY s.classroom_section
+            `;
+            const res = await client.query(query);
+            
+            return res.rows.map(row => {
+                const section = row.classroom_section;
+                const present = parseInt(row.present_count);
+                const totalStudents = sectionTotals[section] || 0;
+                // Naive calculation: present count vs total students (not accounting for # of days)
+                // This gives a raw "presence volume" metric which is safer for leaderboards than % if days vary
+                return {
+                    section,
+                    present,
+                    totalStudents
+                };
+            }).sort((a, b) => b.present - a.present);
+        };
+
+        const leaderboardWeek = await getLeaderboard('7 days');
+        const leaderboardMonth = await getLeaderboard('30 days');
+
+        res.json({
+            kioskPerformance: {
+                daily: kioskDailyRes.rows,
+                weekly: kioskWeeklyRes.rows
+            },
+            leaderboard: {
+                week: leaderboardWeek,
+                month: leaderboardMonth
+            }
+        });
+
+    } catch (err) {
+        debugLogWriteToFile(`[ANALYTICS] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

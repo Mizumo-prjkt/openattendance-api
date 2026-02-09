@@ -985,3 +985,117 @@ app.get('/api/students/stats/:student_id', async (req, res) => {
         client.release();
     }
 });
+
+// [STAFF]
+// Get all staff
+app.get('/api/staff/list', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT 
+                id, 
+                staff_id, 
+                name, 
+                email_address as email, 
+                staff_type as type, 
+                CASE WHEN active = 1 THEN 'Active' ELSE 'Inactive' END as status, 
+                profile_image_path as profile_image 
+            FROM staff_accounts 
+            ORDER BY name ASC
+        `;
+        const result = await client.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[STAFF] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add staff
+app.post('/api/staff/add', async (req, res) => {
+    const { staff_id, name, email, type, status, profile_image } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        let imagePath = null;
+        if (profile_image && profile_image.startsWith('data:image')) {
+             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+             const buffer = Buffer.from(base64Data, 'base64');
+             const fileName = `staff_${staff_id}_${Date.now()}.png`;
+             const filePath = path.join(__dirname, 'runtime/shared/images/staff_profiles', fileName);
+             fs.writeFileSync(filePath, buffer);
+             imagePath = `/assets/images/staff_profiles/${fileName}`;
+        }
+
+        const active = status === 'Active' ? 1 : 0;
+
+        const query = `
+            INSERT INTO staff_accounts (staff_id, name, email_address, staff_type, active, profile_image_path)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        `;
+        await client.query(query, [staff_id, name, email, type, active, imagePath]);
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        debugLogWriteToFile(`[STAFF] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Update staff
+app.put('/api/staff/update', async (req, res) => {
+    const { id, staff_id, name, email, type, status, profile_image } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        
+        let imagePath = profile_image; 
+        if (profile_image && profile_image.startsWith('data:image')) {
+             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+             const buffer = Buffer.from(base64Data, 'base64');
+             const fileName = `staff_${staff_id}_${Date.now()}.png`;
+             const filePath = path.join(__dirname, 'runtime/shared/images/staff_profiles', fileName);
+             fs.writeFileSync(filePath, buffer);
+             imagePath = `/assets/images/staff_profiles/${fileName}`;
+        }
+
+        const active = status === 'Active' ? 1 : 0;
+
+        const query = `
+            UPDATE staff_accounts 
+            SET staff_id = $1, name = $2, email_address = $3, staff_type = $4, active = $5, profile_image_path = $6
+            WHERE id = $7
+        `;
+        await client.query(query, [staff_id, name, email, type, active, imagePath, id]);
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        debugLogWriteToFile(`[STAFF] UPDATE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Delete staff
+app.delete('/api/staff/delete', async (req, res) => {
+    const { id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM staff_accounts WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[STAFF] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

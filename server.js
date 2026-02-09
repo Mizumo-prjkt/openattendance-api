@@ -579,3 +579,69 @@ app.get('/api/setup/verify-schema', async (req, res) => {
         });
     }
 });
+
+// [DASH]
+// Dashboard Overview Endpoint
+app.get('/api/dashboard/overview', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        // 1. Stats
+        const totalStudentsRes = await client.query("SELECT COUNT(*) FROM students WHERE status = 'Active'");
+        const totalStudents = parseInt(totalStudentsRes.rows[0].count || 0);
+
+        const presentTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE");
+        const presentToday = parseInt(presentTodayRes.rows[0].count || 0);
+
+        const absentTodayRes = await client.query("SELECT COUNT(*) FROM absent WHERE absent_datetime::date = CURRENT_DATE");
+        const absentToday = parseInt(absentTodayRes.rows[0].count || 0);
+
+        // Late: Assuming late is after 8:00 AM (Hardcoded for now, should be config)
+        const lateTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE AND time_in::time > '08:00:00'");
+        const lateToday = parseInt(lateTodayRes.rows[0].count || 0);
+
+        // 2. Chart Data (Last 7 days)
+        // Uses generate_series to ensure we have days even if empty
+        const chartQuery = `
+            SELECT 
+                to_char(d, 'Dy') as day,
+                COALESCE(COUNT(p.present_id), 0) as count
+            FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day') d
+            LEFT JOIN present p ON p.time_in::date = d::date
+            GROUP BY d
+            ORDER BY d
+        `;
+        const chartRes = await client.query(chartQuery);
+
+        // 3. Recent Activity (Last 5 scans)
+        const activityQuery = `
+            SELECT 
+                s.first_name || ' ' || s.last_name as title,
+                'Checked in at ' || to_char(p.time_in, 'HH12:MI AM') as desc,
+                to_char(p.time_in, 'HH12:MI AM') as time,
+                'login' as icon,
+                'text-[#146C2E]' as iconColor,
+                'bg-[#C4EED0]' as bg
+            FROM present p
+            JOIN students s ON p.student_id = s.student_id
+            ORDER BY p.time_in DESC
+            LIMIT 5
+        `;
+        const activityRes = await client.query(activityQuery);
+
+        res.json({
+            stats: {
+                totalStudents,
+                presentToday,
+                absentToday,
+                lateToday
+            },
+            chartData: chartRes.rows,
+            recentActivity: activityRes.rows
+        });
+    } catch (err) {
+        debugLogWriteToFile(`[DASH] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

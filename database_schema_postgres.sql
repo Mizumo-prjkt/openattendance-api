@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS students (
     qr_code_token TEXT UNIQUE,
     profile_image_path TEXT,
     classroom_section TEXT,
-    status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive'))
+    status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive')),
+    gender TEXT CHECK (gender IN('Male', 'Female', 'Other'))
 );
 
 -- 3. Configurations

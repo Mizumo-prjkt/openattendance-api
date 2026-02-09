@@ -432,6 +432,7 @@ app.get('/api/students/list', async (req, res) => {
                 first_name, 
                 last_name, 
                 classroom_section as section, 
+                gender,
                 status, 
                 profile_image_path as profile_image 
             FROM students 
@@ -449,7 +450,7 @@ app.get('/api/students/list', async (req, res) => {
 
 // Add student
 app.post('/api/students/add', async (req, res) => {
-    const { student_id, first_name, last_name, section, status, profile_image } = req.body;
+    const { student_id, first_name, last_name, section, gender, status, profile_image } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -465,11 +466,11 @@ app.post('/api/students/add', async (req, res) => {
         }
 
         const query = `
-            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, profile_image_path)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id
         `;
-        await client.query(query, [student_id, first_name, last_name, section, status || 'Active', imagePath]);
+        await client.query(query, [student_id, first_name, last_name, section, gender, status || 'Active', imagePath]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
@@ -483,7 +484,7 @@ app.post('/api/students/add', async (req, res) => {
 
 // Update student
 app.put('/api/students/update', async (req, res) => {
-    const { id, student_id, first_name, last_name, section, status, profile_image } = req.body;
+    const { id, student_id, first_name, last_name, section, gender, status, profile_image } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -500,10 +501,10 @@ app.put('/api/students/update', async (req, res) => {
 
         const query = `
             UPDATE students 
-            SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, status = $5, profile_image_path = $6
-            WHERE id = $7
+            SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, gender = $5, status = $6, profile_image_path = $7
+            WHERE id = $8
         `;
-        await client.query(query, [student_id, first_name, last_name, section, status, imagePath, id]);
+        await client.query(query, [student_id, first_name, last_name, section, gender, status, imagePath, id]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

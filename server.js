@@ -787,7 +787,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
 // [ANALYTICS]
 // Detailed Analytics Endpoint
 app.get('/api/dashboard/analytics', async (req, res) => {
-    const { filter_type, filter_Value } = req.query;
+    const { filter_type, filter_value } = req.query;
     const client = await pool.connect();
     try {
         // 1. Kiosk Performance (Scans by Staff/Kiosk Account)

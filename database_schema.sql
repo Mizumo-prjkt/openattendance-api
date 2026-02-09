@@ -1,171 +1,162 @@
---  This is a mapping of the database schema for the application.
+-- 1. ENUM Types for Status and Roles
+-- Derived from staff.jsx, students.jsx, and events.jsx
+CREATE TYPE user_status AS ENUM ('Active', 'Inactive');
+CREATE TYPE staff_role AS ENUM ('teacher', 'security', 'student_council', 'admin');
+CREATE TYPE student_status AS ENUM ('Active', 'Inactive', 'Dropped', 'Transferred');
+CREATE TYPE event_status AS ENUM ('planned', 'ongoing', 'completed', 'cancelled');
+CREATE TYPE attendance_type AS ENUM ('in', 'out');
+CREATE TYPE attendance_status AS ENUM ('on_time', 'late', 'absent', 'excused');
+CREATE TYPE sms_provider_type AS ENUM ('api', 'usb');
 
-CREATE TABLE IF NOT EXISTS benchmark_test (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    col_text1 TEXT,
-    col_text2 TEXT,
-    col_int1 INTEGER,
-    col_int2 INTEGER,
-    col_real1 REAL,
-    col_real2 REAL,
-    col_blob1 BLOB,
-    col_date1 DATE,
-    col_bool1 BOOLEAN
+-- 2. System Settings & Configuration
+-- Derived from settings.jsx (General, SMS, Security)
+CREATE TABLE system_settings (
+    id SERIAL PRIMARY KEY,
+    school_name TEXT NOT NULL DEFAULT 'My School',
+    school_id TEXT,
+    country_code VARCHAR(5) DEFAULT 'PH',
+    address TEXT,
+    logo_path TEXT, -- Stores path to uploaded logo
+    maintenance_mode BOOLEAN DEFAULT FALSE,
+    debug_logging BOOLEAN DEFAULT FALSE,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS students (
-   id INTEGER PRIMARY KEY AUTOINCREMENT, -- database index
-   last_name TEXT,                       -- optional
-   first_name TEXT NOT NULL,             -- required
-   middle_name TEXT,                     -- optional
-   phone_number TEXT,                    -- optional
-   address TEXT,                         -- optional
-   emergency_contact_name TEXT,          -- optional
-   emergency_contact_phone TEXT,         -- optional
-   emergency_contact_relationship TEXT CHECK (
-       emergency_contact_relationship IN ('parent', 'guardian')
-   ),                                    -- optional, locked to parent/guardian
-   student_id TEXT NOT NULL UNIQUE,      -- required, must be unique
-   profile_image_path TEXT,              -- optional, path to student's profile image
-   classroom_section TEXT                -- optional, e.g., "Grade 10 - Section B"
+CREATE TABLE sms_configurations (
+    id SERIAL PRIMARY KEY,
+    is_enabled BOOLEAN DEFAULT FALSE,
+    provider_type sms_provider_type DEFAULT 'api',
+    
+    -- API Provider Fields
+    api_url TEXT,
+    api_key TEXT,
+    sender_name TEXT,
+    
+    -- USB Modem Fields
+    tty_port TEXT, -- e.g., /dev/ttyUSB2
+    baud_rate INTEGER DEFAULT 115200,
+    
+    -- Templates & Advanced
+    message_template TEXT,
+    curl_config JSONB, -- Stores the raw JSON for advanced CURL configurations
+    
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-
-CREATE TABLE IF NOT EXISTS configurations (
-   config_id INTEGER PRIMARY KEY AUTOINCREMENT, -- internal index
-   school_name TEXT NOT NULL,                   -- required
-   school_type TEXT CHECK (
-       school_type IN ('public', 'private', 'charter', 'international')
-   ),                                           -- optional but constrained
-   address TEXT,                                -- optional
-   logo_directory TEXT,                         -- optional, path to logo file
-   organization_hotline TEXT,                   -- optional
-   country_code TEXT NOT NULL,                   -- required, e.g. 'PH', 'US'
-   created_config_date TEXT
+-- 3. Staff & Authentication
+-- Derived from staff.jsx and login.jsx
+CREATE TABLE staff (
+    id SERIAL PRIMARY KEY,
+    staff_id VARCHAR(50) UNIQUE NOT NULL, -- displayed as STAFF001
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    role staff_role NOT NULL DEFAULT 'teacher',
+    status user_status DEFAULT 'Active',
+    profile_image_path TEXT, -- Base64 or file path
+    
+    -- Authentication
+    password_hash VARCHAR(255), -- For login.jsx
+    last_login TIMESTAMP,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Excused table
-CREATE TABLE IF NOT EXISTS excused (
-    excused_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id TEXT NOT NULL,
-    requester_staff_id TEXT NOT NULL,      -- Who initiated the request (staff_id)
-    processor_id TEXT,                     -- Who approved/rejected it (staff_id or admin_id)
-    processor_type TEXT CHECK (processor_type IN ('staff', 'admin')), -- Type of processor
-    reason TEXT NOT NULL,
-    request_datetime DATETIME NOT NULL,
-    verdict_datetime DATETIME,
-    result TEXT NOT NULL CHECK (result IN ('pending', 'excused', 'rejected')) DEFAULT 'pending',
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (requester_staff_id) REFERENCES staff_accounts(staff_id)
-    -- Note: We can't use a direct FOREIGN KEY for processor_id due to its dual nature.
+-- 4. Classes / Sections
+-- Derived from classes.jsx
+CREATE TABLE classes (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL, -- e.g., "Grade 10 - A"
+    room VARCHAR(50),
+    adviser_id INTEGER REFERENCES staff(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Present table
-CREATE TABLE IF NOT EXISTS present (
-    present_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id TEXT NOT NULL,
-    staff_id TEXT NOT NULL, -- who logged the attendance
-    time_in DATETIME NOT NULL,
-    time_out DATETIME,
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
+-- 5. Class Schedules
+-- Derived from classes.jsx (Weekly Class Schedule table)
+CREATE TABLE class_schedules (
+    id SERIAL PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+    day_of_week VARCHAR(3) NOT NULL, -- Mon, Tue, Wed, etc.
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    subject TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Absent table
-CREATE TABLE IF NOT EXISTS absent (
-    absent_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id TEXT NOT NULL,
-    staff_id TEXT NOT NULL, -- who recorded the absence
-    reason TEXT,
-    absent_datetime DATETIME NOT NULL,
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
+-- 6. Students
+-- Derived from students.jsx
+CREATE TABLE students (
+    id SERIAL PRIMARY KEY,
+    student_id VARCHAR(50) UNIQUE NOT NULL, -- e.g., STU-2024-001
+    first_name TEXT NOT NULL,
+    last_name TEXT NOT NULL,
+    class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL, -- Links to 'section'
+    status student_status DEFAULT 'Active',
+    profile_image_path TEXT,
+    
+    -- Guardian Contact for SMS
+    guardian_name TEXT,
+    guardian_phone VARCHAR(20),
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-
-CREATE TABLE IF NOT EXISTS staff_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    staff_id TEXT NOT NULL UNIQUE, -- unique identifier for staff
+-- 7. Events
+-- Derived from events.jsx
+CREATE TABLE events (
+    id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
-    phone_number TEXT,
-    email_address TEXT UNIQUE,
-    staff_type TEXT NOT NULL CHECK (
-        staff_type IN ('student_council', 'teacher', 'security')
-    ),
-    teacher_type TEXT, -- only relevant if staff_type = 'teacher'
-    adviser_unit TEXT, -- can be NULL
-    profile_image_path TEXT, -- path to the staff's profile image
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1))
-);
-
--- Staff Login Credentials Table
-CREATE TABLE IF NOT EXISTS staff_login (
-    login_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    staff_id TEXT NOT NULL UNIQUE,
-    username TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
-    FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE CASCADE
-);
-
--- Events related
-
-CREATE TABLE IF NOT EXISTS events (
-    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_name TEXT NOT NULL,
-    event_description TEXT,
     location TEXT,
-    start_datetime DATETIME NOT NULL,
-    end_datetime DATETIME NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('planned', 'ongoing', 'completed', 'cancelled')) DEFAULT 'planned',
-    created_by_staff_id TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (created_by_staff_id) REFERENCES staff_accounts(staff_id)
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    status event_status DEFAULT 'planned',
+    description TEXT,
+    created_by INTEGER REFERENCES staff(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Events attendee
-CREATE TABLE IF NOT EXISTS event_attendees (
-    event_attendee_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_id INTEGER NOT NULL,
-    student_id TEXT NOT NULL,
-    check_in_time DATETIME NOT NULL,
-    check_out_time DATETIME,
-    checked_in_by_staff_id TEXT NOT NULL,
-    FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (checked_in_by_staff_id) REFERENCES staff_accounts(staff_id),
-    UNIQUE (event_id, student_id)
+-- 8. Attendance Logs (Normal Daily)
+-- Derived from attendance.jsx (Normal Mode)
+CREATE TABLE attendance_logs (
+    id SERIAL PRIMARY KEY,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    type attendance_type NOT NULL, -- 'in' or 'out'
+    status attendance_status DEFAULT 'on_time',
+    scan_method VARCHAR(20) DEFAULT 'scanner', -- 'sensor' or 'camera'
+    
+    -- Partitioning key (optional but good for large data)
+    log_date DATE DEFAULT CURRENT_DATE
 );
 
--- Granular Daily Attendance Logs
--- This table is designed to replace the simple 'present' and 'absent' tables over time.
-CREATE TABLE IF NOT EXISTS daily_attendance_logs (
-    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id TEXT NOT NULL,
-    staff_id TEXT NOT NULL,
-    log_date DATE NOT NULL,
-    log_slot TEXT NOT NULL CHECK (log_slot IN ('morning_in', 'morning_out', 'afternoon_in', 'afternoon_out', 'evening_in', 'evening_out')),
-    log_time TIME NOT NULL,
-    log_datetime DATETIME NOT NULL,
-    UNIQUE(student_id, log_date, log_slot),
-    FOREIGN KEY (student_id) REFERENCES students(student_id),
-    FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
+-- 9. Event Attendance
+-- Derived from attendance.jsx (Event Mode) & events.jsx (Manage Students tab)
+CREATE TABLE event_attendance (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+    student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+    check_in_time TIMESTAMP,
+    check_out_time TIMESTAMP,
+    status attendance_status DEFAULT 'present',
+    
+    UNIQUE(event_id, student_id)
 );
 
--- System Logs table
-CREATE TABLE IF NOT EXISTS system_logs (
-    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    level TEXT NOT NULL CHECK (level IN ('INFO', 'DEBUG', 'WARN', 'ERROR', 'FATAL')),
-    message TEXT NOT NULL,
-    source TEXT, -- e.g., 'setup', 'runtime', 'api-login'
-    details TEXT -- For stack traces or JSON context
+-- 10. Event Staffing
+-- Derived from events.jsx (Manage Staff tab)
+CREATE TABLE event_staff (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+    staff_id INTEGER REFERENCES staff(id) ON DELETE CASCADE,
+    role TEXT, -- Specific role for the event (e.g., Supervisor)
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- SMS Provider Settings
-CREATE TABLE IF NOT EXISTS sms_provider_settings (
-    id INTEGER PRIMARY KEY CHECK (id = 1), -- Ensures only one row can exist
-    provider_name TEXT NOT NULL,           -- e.g., 'semaphore'
-    sender_name TEXT,                      -- The name that appears as the sender
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+-- Indexes for Performance
+CREATE INDEX idx_students_student_id ON students(student_id);
+CREATE INDEX idx_staff_staff_id ON staff(staff_id);
+CREATE INDEX idx_attendance_student_date ON attendance_logs(student_id, log_date);
+CREATE INDEX idx_events_start_time ON events(start_time);

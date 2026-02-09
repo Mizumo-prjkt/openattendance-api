@@ -931,3 +931,29 @@ app.post('/api/setup/migrate', async (req, res) => {
         client.release();
     }
 });
+
+// [STD-STATS]
+// Get student statistics
+app.get('/api/students/stats/:student_id', async (req, res) => {
+    const { student_id } = req.params;
+    const client = await pool.connect();
+    try {
+        const presentRes = await client.query('SELECT COUNT(*) FROM present WHERE student_id = $1', [student_id]);
+        const absentRes = await client.query('SELECT COUNT(*) FROM absent WHERE student_id = $1', [student_id]);
+        const lateRes = await client.query("SELECT COUNT(*) FROM present WHERE student_id = $1 AND time_in::time > '08:00:00'", [student_id]);
+
+        const present = parseInt(presentRes.rows[0].count || 0);
+        const absent = parseInt(absentRes.rows[0].count || 0);
+        const late = parseInt(lateRes.rows[0].count || 0);
+        const total = present + absent;
+
+        const rate = total > 0 ? ((present / total) * 100).toFixed(1) + '%' : 'No Data';
+
+        res.json({ present, absent, late, total, rate });
+    } catch (err) {
+        debugLogWriteToFile(`[STUDENTS] STATS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

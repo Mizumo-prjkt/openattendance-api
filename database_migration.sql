@@ -50,4 +50,9 @@ CREATE TABLE IF NOT EXISTS sms_logs (
     FOREIGN KEY (related_student_id) REFERENCES students(student_id)
 );
 
+-- 6. Update staff_accounts check constraint to allow 'admin'
+ALTER TABLE staff_accounts DROP CONSTRAINT IF EXISTS staff_accounts_staff_type_check;
+ALTER TABLE staff_accounts ADD CONSTRAINT staff_accounts_staff_type_check CHECK (staff_type IN ('student_council', 'teacher', 'security', 'admin'));
+
+
 COMMIT;

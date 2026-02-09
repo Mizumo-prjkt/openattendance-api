@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS staff_accounts (
     name TEXT NOT NULL,
     phone_number TEXT,
     email_address TEXT UNIQUE,
-    staff_type TEXT NOT NULL CHECK (staff_type IN ('student_council', 'teacher', 'security')),
+    staff_type TEXT NOT NULL CHECK (staff_type IN ('student_council', 'teacher', 'security', 'admin')),
     teacher_type TEXT,
     adviser_unit TEXT,
     profile_image_path TEXT,

@@ -703,7 +703,7 @@ app.get('/api/setup/verify-schema', async (req, res) => {
     debugLogWriteToFile(`[VERI_SCHEMA]: Starting DB schema creation and verification...`);
     try {
         // 1. Read the entire schema
-        const schemaPath = path.join(__dirname, 'database_schema.sql');
+        const schemaPath = path.join(__dirname, 'database_schema_postgres.sql');
         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
         // 2. Execute the entire script at once

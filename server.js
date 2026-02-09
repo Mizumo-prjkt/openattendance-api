@@ -174,7 +174,7 @@ io.on('connection', (socket) => {
 });
 
 // Start the server!
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     brkln('nl');
     brkln('el');
     console.log('OpenAttendance API is running...');

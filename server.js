@@ -191,12 +191,32 @@ async function checkAndInitDB() {
         if (!res.rows[0].exists) {
             console.log('Database tables not found, creating new DB from schema');
             debugLogWriteToFile('[POSTGRES]: Database tables not found, creating new database from schema');
-            const schemaPath = path.join(__dirname, 'database_schema.sql');
+            const schemaPath = path.join(__dirname, 'database_schema_postgres.sql');
             const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
 
             await pool.query(schemaSql);
             console.log(`Database Created and initialized successfully`);
             debugLogWriteToFile(`[POSTGRES]: DB created and initialized successfully...`);
+        } else {
+            // Since Commit 12db02342be5c4a500603ec8b81bcda7c7d8042c and
+            // 13899e29faee8ca5c0652375a4fdcac13c2f6256 have caused some problems (bruh)
+            // This will serve as a failsafe...
+            const checkColumn = await pool.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'student' AND column_name = 'status'
+            `);
+            if (checkColumn.rows.length === 0) {
+                console.log('Detected outdated schema... Applying migration proceedures');
+                debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
+                const migrationPath = path.join(__dirname, 'database_migration.sql');
+                if (fs.existsSync(migrationPath)) {
+                    const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
+                    await pool.query(migrationSql);
+                    console.log('Database migration applied successfully.');
+                    debugLogWriteToFile('[POSTGRES]: Database migration applied successfully.');
+                }
+            }
         }
     } catch (err) {
         console.error(`Error checking/initializing DB: ${err.message}`);

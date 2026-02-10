@@ -520,12 +520,25 @@ app.post('/api/students/add', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+
+        // Sanitize & Trim Inputs
+        // There may be empty spaces being passed on, so we need to
+        // avoid that by enforcing to clean up.
+        const s_student_id = student_id ? student_id.trim() : '';
+        const s_first_name = first_name ? first_name.trim() : '';
+        const s_last_name = last_name ? last_name.trim() : '';
+        const s_section = section ? section.trim() : null;
+        const s_status = status ? status.trim() : 'Active';
+        const s_ec_name = emergency_contact_name ? emergency_contact_name.trim() : null;
+        const s_ec_phone = emergency_contact_phone ? emergency_contact_phone.trim() : null;
+        const s_ec_rel = emergency_contact_relationship ? emergency_contact_relationship.trim() : null;
+
         
         let imagePath = null;
         if (profile_image && profile_image.startsWith('data:image')) {
              const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
              const buffer = Buffer.from(base64Data, 'base64');
-             const fileName = `student_${student_id}_${Date.now()}.png`;
+             const fileName = `student_${s_student_id}_${Date.now()}.png`;
              const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
              fs.writeFileSync(filePath, buffer);
              imagePath = `/assets/images/student_profiles/${fileName}`;
@@ -535,8 +548,9 @@ app.post('/api/students/add', async (req, res) => {
         console.log(`[DEBUG] Received Gender: ${gender}`);
         let sanitizedGender = 'Male';
         if (gender) {
-            // Capitalize first letter, lowercase rest (e.g. "male" -> "Male")
-            sanitizedGender = gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
+            // Trim and capitalize first, lowercase rest
+            const g = gender.trim();
+            sanitizedGender = g.charAt(0).toUpperCase() + g.slice(1).toLowerCase();
             if (!['Male', 'Female', 'Other'].includes(sanitizedGender)) {
                 sanitizedGender = 'Male'; // Fallback
             }
@@ -548,7 +562,7 @@ app.post('/api/students/add', async (req, res) => {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
         `;
-        await client.query(query, [student_id, first_name, last_name, section, sanitizedGender, status || 'Active', imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token]);
+        await client.query(query, [s_student_id, s_first_name, s_last_name, s_section, sanitizedGender, s_status , imagePath, s_ec_name, s_ec_phone, s_ec_rel, qr_code_token]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
@@ -566,6 +580,17 @@ app.put('/api/students/update', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+
+        // Sanitize & Trim Inputs
+        const s_student_id = student_id ? student_id.trim() : '';
+        const s_first_name = first_name ? first_name.trim() : '';
+        const s_last_name = last_name ? last_name.trim() : '';
+        const s_section = section ? section.trim() : null;
+        const s_status = status ? status.trim() : 'Active';
+        const s_ec_name = emergency_contact_name ? emergency_contact_name.trim() : null;
+        const s_ec_phone = emergency_contact_phone ? emergency_contact_phone.trim() : null;
+        const s_ec_rel = emergency_contact_relationship ? emergency_contact_relationship.trim() : null;
+
         
         let imagePath = profile_image; 
         if (profile_image && profile_image.startsWith('data:image')) {
@@ -581,7 +606,9 @@ app.put('/api/students/update', async (req, res) => {
         let sanitizedGender = 'Male';
         if (gender) {
             // Capitalize first letter, lowercase rest (e.g. "male" -> "Male")
-            sanitizedGender = gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
+            // We first trim values
+            const g = gender.trim();
+            sanitizedGender = g.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
             if (!['Male', 'Female', 'Other'].includes(sanitizedGender)) {
                 sanitizedGender = 'Male'; // Fallback
             }
@@ -592,7 +619,7 @@ app.put('/api/students/update', async (req, res) => {
             SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, gender = $5, status = $6, profile_image_path = $7, emergency_contact_name = $8, emergency_contact_phone = $9, emergency_contact_relationship = $10
             WHERE id = $11
         `;
-        await client.query(query, [student_id, first_name, last_name, section, sanitizedGender, status, imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, id]);
+        await client.query(query, [s_student_id, s_first_name, s_last_name, s_section, sanitizedGender, s_status, imagePath, s_ec_name, s_ec_phone, s_ec_rel, id]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

@@ -181,6 +181,8 @@ CREATE TABLE IF NOT EXISTS sections (
     section_name TEXT NOT NULL UNIQUE,
     adviser_staff_id TEXT,
     room_number TEXT,
+    grade_level INTEGER,
+    strand TEXT,
     schedule_data JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id)

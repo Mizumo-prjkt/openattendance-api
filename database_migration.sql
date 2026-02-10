@@ -54,5 +54,8 @@ CREATE TABLE IF NOT EXISTS sms_logs (
 ALTER TABLE staff_accounts DROP CONSTRAINT IF EXISTS staff_accounts_staff_type_check;
 ALTER TABLE staff_accounts ADD CONSTRAINT staff_accounts_staff_type_check CHECK (staff_type IN ('student_council', 'teacher', 'security', 'admin'));
 
+-- 7. Update sections to include grade_level and strand
+ALTER TABLE sections ADD COLUMN IF NOT EXISTS grade_level INTEGER;
+ALTER TABLE sections ADD COLUMN IF NOT EXISTS strand TEXT;
 
 COMMIT;

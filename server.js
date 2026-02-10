@@ -235,7 +235,7 @@ async function checkAndInitDB() {
             const checkColumn = await pool.query(`
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'students' AND column_name = 'status'
+                WHERE table_name = 'students' AND column_name = 'grade_level'
             `);
             if (checkColumn.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
@@ -998,6 +998,8 @@ app.get('/api/sections/list', async (req, res) => {
                 s.adviser_staff_id,
                 sa.name as adviser_name,
                 s.room_number as room,
+                s.grade_level,
+                s.strand,
                 s.schedule_data,
                 (SELECT COUNT(*)::int FROM students st WHERE st.classroom_section = s.section_name AND st.status = 'Active') as student_count
             FROM sections s
@@ -1012,6 +1014,8 @@ app.get('/api/sections/list', async (req, res) => {
             adviser: row.adviser_name || 'Unassigned',
             adviser_id: row.adviser_staff_id,
             room: row.room,
+            grade_level: row.grade_level,
+            strand: row.strand,
             student_count: row.student_count,
             schedule: row.schedule_data || []
         }));
@@ -1026,15 +1030,15 @@ app.get('/api/sections/list', async (req, res) => {
 
 // Add/Update/Delete Section
 app.post('/api/sections/add', async (req, res) => {
-    const { name, adviser_id, room, schedule } = req.body;
+    const { name, adviser_id, room, grade_level, strand, schedule } = req.body;
     const client = await pool.connect();
     try {
         const query = `
-            INSERT INTO sections (section_name, adviser_staff_id, room_number, schedule_data)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO sections (section_name, adviser_staff_id, room_number, grade_level, strand ,schedule_data)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING section_id
         `;
-        await client.query(query, [name, adviser_id || null, room, JSON.stringify(schedule || [])]);
+        await client.query(query, [name, adviser_id || null, room, grade_level || null , strand || null , JSON.stringify(schedule || [])]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SECTIONS] ADD ERROR: ${err.message}`);
@@ -1045,15 +1049,15 @@ app.post('/api/sections/add', async (req, res) => {
 });
 
 app.put('/api/sections/update', async (req, res) => {
-    const { id, name, adviser_id, room, schedule } = req.body;
+    const { id, name, adviser_id, room, grade_level, strand, schedule } = req.body;
     const client = await pool.connect();
     try {
         const query = `
             UPDATE sections
-            SET section_name = $1, adviser_staff_id = $2, room_number = $3, schedule_data = $4
-            WHERE section_id = $5
+            SET section_name = $1, adviser_staff_id = $2, room_number = $3, grade_level = $4, strand = $5, schedule_data = $6
+            WHERE section_id = $7
         `;
-        await client.query(query, [name, adviser_id || null, room, JSON.stringify(schedule || []), id]);
+        await client.query(query, [name, adviser_id || null, room, grade_level || null, strand || null, JSON.stringify(schedule || []), id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SECTIONS] UPDATE ERROR: ${err.message}`);

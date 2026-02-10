@@ -249,19 +249,37 @@ async function checkAndInitDB() {
                 }
             }
 
-            // [HOTFIX] Force Gender Constraint Fix (Please comment if fixed in later development)
+            
+            // [HOTFIX] Force Gender Constraint Fix
             // This ensures the constraint is correct even if migration failed or constraint name varied
             console.log('Applying constraint hotfixes...');
-            await pool.query(`
-                DO $$ 
-                BEGIN 
-                    UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male';
-                    UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female';
-                    UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other';
-                    ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check;
-                    ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'));
-                EXCEPTION WHEN OTHERS THEN NULL; END $$;
-            `);
+            const hotfixClient = await pool.connect();
+            try {
+                await hotfixClient.query('BEGIN');
+                
+                // 1. Sanitize Gender (Handle Case & Invalid Values)
+                await hotfixClient.query("UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male'");
+                await hotfixClient.query("UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female'");
+                await hotfixClient.query("UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other'");
+                // Catch-all: Set any remaining invalid values to 'Other' so constraint doesn't fail
+                await hotfixClient.query("UPDATE students SET gender = 'Other' WHERE gender NOT IN ('Male', 'Female', 'Other') AND gender IS NOT NULL");
+                
+                // 2. Re-apply Gender Constraint
+                await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check");
+                await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'))");
+
+                // 3. Ensure Relationship Constraint Exists (Just in case)
+                await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_emergency_contact_relationship_check");
+                await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_emergency_contact_relationship_check CHECK (emergency_contact_relationship IN ('parent', 'guardian'))");
+
+                await hotfixClient.query('COMMIT');
+                console.log('Constraint hotfixes applied successfully.');
+            } catch (err) {
+                await hotfixClient.query('ROLLBACK');
+                console.error(`[HOTFIX] Error applying constraints: ${err.message}`);
+            } finally {
+                hotfixClient.release();
+            };
         }
     } catch (err) {
         console.error(`Error checking/initializing DB: ${err.message}`);

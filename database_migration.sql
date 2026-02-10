@@ -89,4 +89,8 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS attendee_count INTEGER DEFAULT 0;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS end_datetime TIMESTAMP;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT;
 
+-- 10. Add created_by_staff_id to events
+ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_staff_id TEXT;
+
+
 COMMIT;

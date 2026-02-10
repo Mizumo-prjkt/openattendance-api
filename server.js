@@ -272,7 +272,19 @@ async function checkAndInitDB() {
                 WHERE table_name = 'events' AND column_name = 'event_type'
             `);
 
-            if (checkColumn.rows.length === 0 || checkEvents.rows.length === 0 || checkEventCol.rows.length === 0 || checkEventEndCol.rows.length === 0 || checkEventTypeCol.rows.length === 0) {
+            const checkCreatedByCol = await pool.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events' AND column_name = 'created_by_staff_id'
+            `);
+
+            // We start nl this arg lmao, i dont like vscrolling this thing
+            if (checkColumn.rows.length === 0 || 
+                checkEvents.rows.length === 0 || 
+                checkEventCol.rows.length === 0 || 
+                checkEventEndCol.rows.length === 0 || 
+                checkEventTypeCol.rows.length === 0 ||
+                checkCreatedByCol.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');

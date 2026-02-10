@@ -23,6 +23,11 @@ ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian'));
 
 -- Fix gender constraint to ensure it matches Title Case
+-- First, sanitize existing data to prevent constraint violation errors during migration
+UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male';
+UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female';
+UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other';
+-- then we proceed to fix it.
 ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check;
 ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'));
 

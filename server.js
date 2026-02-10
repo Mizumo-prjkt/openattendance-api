@@ -235,7 +235,7 @@ async function checkAndInitDB() {
             const checkColumn = await pool.query(`
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'students' AND column_name = 'grade_level'
+                WHERE table_name = 'sections' AND column_name = 'grade_level'
             `);
             if (checkColumn.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');

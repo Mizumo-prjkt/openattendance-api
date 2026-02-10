@@ -1589,3 +1589,18 @@ app.delete('/api/events/delete', async (req, res) => {
         client.release();
     }
 });
+
+// Remove attendance record
+app.delete('/api/events/attendance/delete', async (req, res) => {
+    const { id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM event_attendance WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT ATTENDANCE] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

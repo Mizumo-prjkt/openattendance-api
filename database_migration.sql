@@ -115,5 +115,9 @@ CREATE TABLE IF NOT EXISTS event_attendance (
     FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE
 );
 
+-- 13. Add security fields to events
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event_hash TEXT;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS secure_mode BOOLEAN DEFAULT FALSE;
+
 
 COMMIT;

@@ -1342,3 +1342,85 @@ app.delete('/api/staff/delete', async (req, res) => {
         client.release();
     }
 });
+
+
+// [EVENTS]
+// Get all events
+app.get('/api/events/list', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT 
+                event_id as id, 
+                event_name as name, 
+                event_location as location, 
+                start_datetime as start, 
+                status, 
+                attendee_count 
+            FROM events 
+            ORDER BY start_datetime DESC
+        `;
+        const result = await client.query(query);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[EVENTS] LIST ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add event
+app.post('/api/events/add', async (req, res) => {
+    const { name, location, start, status } = req.body;
+    const client = await pool.connect();
+    try {
+        const query = `
+            INSERT INTO events (event_name, event_location, start_datetime, status)
+            VALUES ($1, $2, $3, $4)
+            RETURNING event_id
+        `;
+        await client.query(query, [name, location, start, status || 'planned']);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENTS] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Update event
+app.put('/api/events/update', async (req, res) => {
+    const { id, name, location, start, status } = req.body;
+    const client = await pool.connect();
+    try {
+        const query = `
+            UPDATE events 
+            SET event_name = $1, event_location = $2, start_datetime = $3, status = $4
+            WHERE event_id = $5
+        `;
+        await client.query(query, [name, location, start, status, id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENTS] UPDATE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Delete event
+app.delete('/api/events/delete', async (req, res) => {
+    const { id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM events WHERE event_id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENTS] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

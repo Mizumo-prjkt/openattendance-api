@@ -345,6 +345,15 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_status_check");
                 await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_status_check CHECK (status IN ('Active', 'Inactive'))");
 
+                 // 5. Fix Events created_by_staff_id constraint (Make it nullable to prevent crashes)
+                const checkCreatedBy = await hotfixClient.query(`
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'events' AND column_name = 'created_by_staff_id'
+                `);
+                if (checkCreatedBy.rows.length > 0) {
+                    await hotfixClient.query("ALTER TABLE events ALTER COLUMN created_by_staff_id DROP NOT NULL");
+                }
 
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
@@ -1411,15 +1420,15 @@ app.get('/api/events/list', async (req, res) => {
 
 // Add event
 app.post('/api/events/add', async (req, res) => {
-    const { name, type, location, start, end, status } = req.body;
+    const { name, type, location, start, end, status, created_by } = req.body;
     const client = await pool.connect();
     try {
         const query = `
-            INSERT INTO events (event_name, event_type, location, start_datetime, end_datetime, status)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO events (event_name, event_type, location, start_datetime, end_datetime, status, created_by_staff_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING event_id
         `;
-        await client.query(query, [name, type, location, start, end, status || 'planned']);
+        await client.query(query, [name, type, location, start, end, status || 'planned', created_by || null]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENTS] ADD ERROR: ${err.message}`);

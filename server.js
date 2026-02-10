@@ -247,7 +247,13 @@ async function checkAndInitDB() {
                 FROM information_schema.columns
                 WHERE table_name = 'sections' AND column_name = 'grade_level'
             `);
-            if (checkColumn.rows.length === 0) {
+
+            const checkEvents = await pool.query(`
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_name = 'events'
+            `);
+            if (checkColumn.rows.length === 0 || checkEvents.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -1351,19 +1357,19 @@ app.get('/api/events/list', async (req, res) => {
     try {
         const query = `
             SELECT 
-                event_id as id, 
-                event_name as name, 
-                event_location as location, 
-                start_datetime as start, 
-                status, 
-                attendee_count 
+                event_id as id,
+                event_name as name,
+                location,
+                start_datetime as start,
+                status,
+                attendee_count
             FROM events 
             ORDER BY start_datetime DESC
         `;
         const result = await client.query(query);
         res.json(result.rows);
     } catch (err) {
-        debugLogWriteToFile(`[EVENTS] LIST ERROR: ${err.message}`);
+        debugLogWriteToFile(`[EVENTS] ERROR: ${err.message}`);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -1376,7 +1382,7 @@ app.post('/api/events/add', async (req, res) => {
     const client = await pool.connect();
     try {
         const query = `
-            INSERT INTO events (event_name, event_location, start_datetime, status)
+            INSERT INTO events (event_name, location, start_datetime, status)
             VALUES ($1, $2, $3, $4)
             RETURNING event_id
         `;
@@ -1397,7 +1403,7 @@ app.put('/api/events/update', async (req, res) => {
     try {
         const query = `
             UPDATE events 
-            SET event_name = $1, event_location = $2, start_datetime = $3, status = $4
+            SET event_name = $1, location = $2, start_datetime = $3, status = $4
             WHERE event_id = $5
         `;
         await client.query(query, [name, location, start, status, id]);

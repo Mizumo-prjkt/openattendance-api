@@ -71,4 +71,16 @@ ALTER TABLE staff_accounts ADD CONSTRAINT staff_accounts_staff_type_check CHECK 
 ALTER TABLE sections ADD COLUMN IF NOT EXISTS grade_level INTEGER;
 ALTER TABLE sections ADD COLUMN IF NOT EXISTS strand TEXT;
 
+-- 8. Create events table
+CREATE TABLE IF NOT EXISTS events (
+    event_id SERIAL PRIMARY KEY,
+    event_name TEXT NOT NULL,
+    location TEXT,
+    start_datetime TIMESTAMP,
+    status TEXT CHECK (status IN ('planned', 'ongoing', 'completed', 'cancelled')),
+    attendee_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
 COMMIT;

@@ -24,6 +24,10 @@ ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_relationship TEX
 
 -- Fix gender constraint to ensure it matches Title Case
 -- First, sanitize existing data to prevent constraint violation errors during migration
+-- Ensure columns are TEXT to avoid padding issues (CHAR vs TEXT)
+ALTER TABLE students ALTER COLUMN gender TYPE TEXT;
+ALTER TABLE students ALTER COLUMN status TYPE TEXT;
+ALTER TABLE students ALTER COLUMN emergency_contact_relationship TYPE TEXT;
 UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male';
 UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female';
 UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other';

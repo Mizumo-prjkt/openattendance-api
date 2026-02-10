@@ -251,10 +251,21 @@ async function checkAndInitDB() {
 
             // [HOTFIX] Force Gender Constraint Fix
             // This ensures the constraint is correct even if migration failed or constraint name varied
+            // Remove this on prod
             console.log('Applying constraint hotfixes...');
             const hotfixClient = await pool.connect();
             try {
                 await hotfixClient.query('BEGIN');
+
+                // 0. Check and Fix Column Types (Prevent CHAR padding issues)
+                const colsToFix = ['gender', 'status', 'emergency_contact_relationship'];
+                for (const col of colsToFix) {
+                     const res = await hotfixClient.query(`SELECT data_type FROM information_schema.columns WHERE table_name = 'students' AND column_name = $1`, [col]);
+                     if (res.rows.length > 0 && res.rows[0].data_type === 'character') {
+                         console.log(`[HOTFIX] Converting ${col} to TEXT to prevent padding issues...`);
+                         await hotfixClient.query(`ALTER TABLE students ALTER COLUMN ${col} TYPE TEXT`);
+                     }
+                }
                 
                 // 1. Sanitize Gender (Handle Case & Invalid Values)
                 await hotfixClient.query("UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male'");
@@ -270,6 +281,16 @@ async function checkAndInitDB() {
                 // 3. Ensure Relationship Constraint Exists (Just in case)
                 await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_emergency_contact_relationship_check");
                 await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_emergency_contact_relationship_check CHECK (emergency_contact_relationship IN ('parent', 'guardian'))");
+
+                // Debug: Verify the constraint definition in DB
+                const checkConstraint = await hotfixClient.query(`
+                    SELECT pg_get_constraintdef(oid) as def 
+                    FROM pg_constraint 
+                    WHERE conname = 'students_gender_check'
+                `);
+                if (checkConstraint.rows.length > 0) {
+                    console.log(`[DEBUG] Constraint Definition in DB: ${checkConstraint.rows[0].def}`);
+                }
 
                 // 4. Fix Status Constraint (Ensure Title Case)
                 await hotfixClient.query("UPDATE students SET status = 'Active' WHERE status ILIKE 'active'");
@@ -553,10 +574,7 @@ app.post('/api/students/add', async (req, res) => {
                 sanitizedGender = 'Male'; // Fallback
             }
         }
-        // Dont forget to remove this console.log
-        // after finding the bug
-        console.log(`[DEBUG] Sanitized Gender: ${sanitizedGender} (Length: ${sanitizedGender.length})`)
-        console.log(`[DEBUG]: GENDER ASCII: ${sanitizedGender.split('').map(c => c.charCodeAt(0)).join(', ')}`);
+
         const qr_code_token = crypto.randomUUID();
         const query = `
             INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token)
@@ -569,6 +587,8 @@ app.post('/api/students/add', async (req, res) => {
     } catch (err) {
         await client.query('ROLLBACK');
         debugLogWriteToFile(`[STUDENTS] ADD ERROR: ${err.message}`);
+        if (err.detail) console.error(`[STUDENTS]: ADD ERROR DETAIL:   ${err.detail}`);
+        if (err.constraint) console.error(`[STUDENTS]: ADD ERROR CONSTRAINT: ${err.constraint}`);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();

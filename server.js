@@ -33,6 +33,8 @@ const checkDiskSpace = require('check-disk-space').default;
 const http = require('http');
 const { Server } = require('socket.io');
 const multer = require('multer'); // Added missing requirement based on code usage
+const QRCode = require('qrcode');
+const archiver = require('archiver');
 
 // Initial
 let debugMode = false;
@@ -1659,6 +1661,58 @@ app.delete('/api/events/attendance/delete', async (req, res) => {
     } catch (err) {
         debugLogWriteToFile(`[EVENT ATTENDANCE] DELETE ERROR: ${err.message}`);
         res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+
+// Export Event Tickets (ZIP of QR Codes)
+app.get('/api/events/export-tickets/:event_id', async (req, res) => {
+    const { event_id } = req.params;
+    const client = await pool.connect();
+    
+    try {
+        // 1. Get Event Details
+        const eventRes = await client.query('SELECT event_name, event_hash, secure_mode FROM events WHERE event_id = $1', [event_id]);
+        if (eventRes.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
+        const event = eventRes.rows[0];
+
+        // 2. Get Active Students
+        const studentsRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE status = 'Active'");
+        const students = studentsRes.rows;
+
+        // 3. Setup Zip Stream
+        const filename = `tickets_${event.event_name.replace(/\s+/g, '-')}.zip`;
+        res.attachment(filename);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        
+        archive.on('error', (err) => { throw err; });
+        archive.pipe(res);
+
+        // 4. Generate QRs
+        for (const student of students) {
+            let qrData;
+            if (event.secure_mode) {
+                // Secure Format: HASH#STUDENT_ID
+                qrData = `${event.event_hash}#${student.student_id}`;
+            } else {
+                // Standard: STUDENT_ID
+                qrData = student.student_id;
+            }
+
+            const buffer = await QRCode.toBuffer(qrData, { width: 300, margin: 2 });
+            const studentName = `${student.first_name}-${student.last_name}`.replace(/\s+/g, '-');
+            const eventName = event.event_name.replace(/\s+/g, '-');
+            const imgFilename = `event_${eventName}_${studentName}.png`;
+            
+            archive.append(buffer, { name: imgFilename });
+        }
+
+        await archive.finalize();
+    } catch (err) {
+        debugLogWriteToFile(`[EVENTS] EXPORT TICKETS ERROR: ${err.message}`);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
     } finally {
         client.release();
     }

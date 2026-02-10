@@ -257,9 +257,15 @@ async function checkAndInitDB() {
             const checkEventCol = await pool.query(`
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'events' AND column_name = 'attendance_count'
-            `)
-            if (checkColumn.rows.length === 0 || checkEvents.rows.length === 0 || checkEventCol.rows.length === 0) {
+                WHERE table_name = 'events' AND column_name = 'attendee_count'
+            `);
+
+            const checkEventEndCol = await pool.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events' AND column_name = 'end_datetime'
+            `);
+            if (checkColumn.rows.length === 0 || checkEvents.rows.length === 0 || checkEventCol.rows.length === 0 || checkEventEndCol.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -1365,8 +1371,10 @@ app.get('/api/events/list', async (req, res) => {
             SELECT 
                 event_id as id,
                 event_name as name,
+                event_type as type,
                 location,
                 start_datetime as start,
+                end_datetime as end,
                 status,
                 attendee_count
             FROM events 
@@ -1384,15 +1392,15 @@ app.get('/api/events/list', async (req, res) => {
 
 // Add event
 app.post('/api/events/add', async (req, res) => {
-    const { name, location, start, status } = req.body;
+    const { name, type, location, start, end, status } = req.body;
     const client = await pool.connect();
     try {
         const query = `
-            INSERT INTO events (event_name, location, start_datetime, status)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO events (event_name, event_type, location, start_datetime, end_datetime, status)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING event_id
         `;
-        await client.query(query, [name, location, start, status || 'planned']);
+        await client.query(query, [name, type, location, start, end, status || 'planned']);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENTS] ADD ERROR: ${err.message}`);
@@ -1404,15 +1412,15 @@ app.post('/api/events/add', async (req, res) => {
 
 // Update event
 app.put('/api/events/update', async (req, res) => {
-    const { id, name, location, start, status } = req.body;
+    const { id, name, type, location, start, end, status } = req.body;
     const client = await pool.connect();
     try {
         const query = `
-            UPDATE events 
-            SET event_name = $1, location = $2, start_datetime = $3, status = $4
-            WHERE event_id = $5
+            UPDATE events
+            SET event_name = $1, event_type = $2, location = $3, start_datetime = $4, end_datetime = $5, status = $6
+            WHERE event_id = $7
         `;
-        await client.query(query, [name, location, start, status, id]);
+        await client.query(query, [name, type, location, start, end, status, id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENTS] UPDATE ERROR: ${err.message}`);

@@ -85,5 +85,8 @@ CREATE TABLE IF NOT EXISTS events (
 -- Hotfix for the events
 ALTER TABLE events ADD COLUMN IF NOT EXISTS attendee_count INTEGER DEFAULT 0;
 
+-- 9. Add end_datetime and event_type to events
+ALTER TABLE events ADD COLUMN IF NOT EXISTS end_datetime TIMESTAMP;
+ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT;
 
 COMMIT;

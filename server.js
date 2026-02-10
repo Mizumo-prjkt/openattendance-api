@@ -986,6 +986,98 @@ app.get('/api/students/stats/:student_id', async (req, res) => {
     }
 });
 
+// [SECTIONS]
+// Get all sections
+app.get('/api/sections/list', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT 
+                s.section_id as id,
+                s.section_name as name,
+                s.adviser_staff_id,
+                sa.name as adviser_name,
+                s.room_number as room,
+                s.schedule_data,
+                (SELECT COUNT(*)::int FROM students st WHERE st.classroom_section = s.section_name AND st.status = 'Active') as student_count
+            FROM sections s
+            LEFT JOIN staff_accounts sa ON s.adviser_staff_id = sa.staff_id
+            ORDER BY s.section_name ASC
+        `;
+        const result = await client.query(query);
+        // Map results to match frontend expectation
+        const mapped = result.rows.map(row => ({
+            id: row.id,
+            name: row.name,
+            adviser: row.adviser_name || 'Unassigned',
+            adviser_id: row.adviser_staff_id,
+            room: row.room,
+            student_count: row.student_count,
+            schedule: row.schedule_data || []
+        }));
+        res.json(mapped);
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add/Update/Delete Section
+app.post('/api/sections/add', async (req, res) => {
+    const { name, adviser_id, room, schedule } = req.body;
+    const client = await pool.connect();
+    try {
+        const query = `
+            INSERT INTO sections (section_name, adviser_staff_id, room_number, schedule_data)
+            VALUES ($1, $2, $3, $4)
+            RETURNING section_id
+        `;
+        await client.query(query, [name, adviser_id || null, room, JSON.stringify(schedule || [])]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.put('/api/sections/update', async (req, res) => {
+    const { id, name, adviser_id, room, schedule } = req.body;
+    const client = await pool.connect();
+    try {
+        const query = `
+            UPDATE sections
+            SET section_name = $1, adviser_staff_id = $2, room_number = $3, schedule_data = $4
+            WHERE section_id = $5
+        `;
+        await client.query(query, [name, adviser_id || null, room, JSON.stringify(schedule || []), id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] UPDATE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.delete('/api/sections/delete', async (req, res) => {
+    const { id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM sections WHERE section_id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+
 // [STAFF]
 // Get all staff
 app.get('/api/staff/list', async (req, res) => {

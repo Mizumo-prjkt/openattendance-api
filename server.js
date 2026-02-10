@@ -1111,7 +1111,7 @@ app.get('/api/staff/list', async (req, res) => {
 
 // Add staff
 app.post('/api/staff/add', async (req, res) => {
-    const { staff_id, name, email, type, status, profile_image } = req.body;
+    const { staff_id, name, email, type, status, profile_image, username, password } = req.body;
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -1134,6 +1134,18 @@ app.post('/api/staff/add', async (req, res) => {
             RETURNING id
         `;
         await client.query(query, [staff_id, name, email, type, active, imagePath]);
+
+        // Create login credentials if provided
+        if (username && password) {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            const loginQuery = `
+                INSERT INTO staff_login (staff_id, username, password)
+                VALUES ($1, $2, $3)
+            `;
+            await client.query(loginQuery, [staff_id, username, hashedPassword]);
+        }
+
+
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

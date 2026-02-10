@@ -235,7 +235,7 @@ async function checkAndInitDB() {
             const checkColumn = await pool.query(`
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'students' AND column_name = 'grade_level'
+                WHERE table_name = 'sections' AND column_name = 'grade_level'
             `);
             if (checkColumn.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
@@ -564,7 +564,6 @@ app.post('/api/students/add', async (req, res) => {
         }
 
         // Sanitize gender to match DB constraint (Title Case)
-        console.log(`[DEBUG] Received Gender: ${gender}`);
         let sanitizedGender = 'Male';
         if (gender) {
             // Trim and capitalize first, lowercase rest (samples: "male" -> "Male")
@@ -581,7 +580,7 @@ app.post('/api/students/add', async (req, res) => {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
         `;
-        await client.query(query, [s_student_id, s_first_name, s_last_name, s_section, sanitizedGender, s_status, imagePath, s_ec_name, s_ec_phone, s_ec_rel, qr_code_token]);
+        await client.query(query, [s_student_id, s_first_name, s_last_name, s_section, s_status, sanitizedGender, imagePath, s_ec_name, s_ec_phone, s_ec_rel, qr_code_token]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

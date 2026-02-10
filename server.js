@@ -493,12 +493,22 @@ app.post('/api/students/add', async (req, res) => {
              imagePath = `/assets/images/student_profiles/${fileName}`;
         }
 
+        // Sanitize gender to match DB constraint (Title Case)
+        let sanitizedGender = 'Male';
+        if (gender) {
+            // Capitalize first letter, lowercase rest (e.g. "male" -> "Male")
+            sanitizedGender = gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
+            if (!['Male', 'Female', 'Other'].includes(sanitizedGender)) {
+                sanitizedGender = 'Male'; // Fallback
+            }
+        }
+
         const query = `
             INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
         `;
-        await client.query(query, [student_id, first_name, last_name, section, gender, status || 'Active', imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship]);
+        await client.query(query, [student_id, first_name, last_name, section, sanitizedGender, status || 'Active', imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
@@ -527,12 +537,22 @@ app.put('/api/students/update', async (req, res) => {
              imagePath = `/assets/images/student_profiles/${fileName}`;
         }
 
+        // Sanitize gender to match DB constraint (Title Case)
+        let sanitizedGender = 'Male';
+        if (gender) {
+            // Capitalize first letter, lowercase rest (e.g. "male" -> "Male")
+            sanitizedGender = gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
+            if (!['Male', 'Female', 'Other'].includes(sanitizedGender)) {
+                sanitizedGender = 'Male'; // Fallback
+            }
+        }
+
         const query = `
             UPDATE students 
             SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, gender = $5, status = $6, profile_image_path = $7, emergency_contact_name = $8, emergency_contact_phone = $9, emergency_contact_relationship = $10
             WHERE id = $11
         `;
-        await client.query(query, [student_id, first_name, last_name, section, gender, status, imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, id]);
+        await client.query(query, [student_id, first_name, last_name, section, sanitizedGender, status, imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, id]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

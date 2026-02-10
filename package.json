@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "API for OpenAttendance",
   "scripts": {
-    "server": "nodemon server.js"
+    "server": "nodemon server.js",
+    "debug-server": "nodemon server.js --debug"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

@@ -249,7 +249,6 @@ async function checkAndInitDB() {
                 }
             }
 
-            
             // [HOTFIX] Force Gender Constraint Fix
             // This ensures the constraint is correct even if migration failed or constraint name varied
             console.log('Applying constraint hotfixes...');
@@ -271,6 +270,13 @@ async function checkAndInitDB() {
                 // 3. Ensure Relationship Constraint Exists (Just in case)
                 await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_emergency_contact_relationship_check");
                 await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_emergency_contact_relationship_check CHECK (emergency_contact_relationship IN ('parent', 'guardian'))");
+
+                // 4. Fix Status Constraint (Ensure Title Case)
+                await hotfixClient.query("UPDATE students SET status = 'Active' WHERE status ILIKE 'active'");
+                await hotfixClient.query("UPDATE students SET status = 'Inactive' WHERE status ILIKE 'inactive'");
+                await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_status_check");
+                await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_status_check CHECK (status IN ('Active', 'Inactive'))");
+
 
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
@@ -535,13 +541,14 @@ app.post('/api/students/add', async (req, res) => {
                 sanitizedGender = 'Male'; // Fallback
             }
         }
-
+        console.log(`[DEBUG] Sanitized Gender: ${sanitizedGender}`)
+        const qr_code_token = crypto.randomUUID();
         const query = `
-            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
         `;
-        await client.query(query, [student_id, first_name, last_name, section, sanitizedGender, status || 'Active', imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship]);
+        await client.query(query, [student_id, first_name, last_name, section, sanitizedGender, status || 'Active', imagePath, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token]);
         await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {

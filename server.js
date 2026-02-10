@@ -235,7 +235,7 @@ async function checkAndInitDB() {
             const checkColumn = await pool.query(`
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'sections' AND column_name = 'grade_level'
+                WHERE table_name = 'students' AND column_name = 'grade_level'
             `);
             if (checkColumn.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
@@ -248,6 +248,20 @@ async function checkAndInitDB() {
                     debugLogWriteToFile('[POSTGRES]: Database migration applied successfully.');
                 }
             }
+
+            // [HOTFIX] Force Gender Constraint Fix (Please comment if fixed in later development)
+            // This ensures the constraint is correct even if migration failed or constraint name varied
+            console.log('Applying constraint hotfixes...');
+            await pool.query(`
+                DO $$ 
+                BEGIN 
+                    UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male';
+                    UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female';
+                    UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other';
+                    ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check;
+                    ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'));
+                EXCEPTION WHEN OTHERS THEN NULL; END $$;
+            `);
         }
     } catch (err) {
         console.error(`Error checking/initializing DB: ${err.message}`);
@@ -494,6 +508,7 @@ app.post('/api/students/add', async (req, res) => {
         }
 
         // Sanitize gender to match DB constraint (Title Case)
+        console.log(`[DEBUG] Received Gender: ${gender}`);
         let sanitizedGender = 'Male';
         if (gender) {
             // Capitalize first letter, lowercase rest (e.g. "male" -> "Male")

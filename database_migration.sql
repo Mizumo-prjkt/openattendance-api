@@ -104,4 +104,16 @@ CREATE TABLE IF NOT EXISTS event_staff (
     UNIQUE(event_id, staff_id)
 );
 
+-- 12. Create event_attendance table
+CREATE TABLE IF NOT EXISTS event_attendance (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    student_id TEXT NOT NULL,
+    time_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    location TEXT,
+    FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
+    FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE
+);
+
+
 COMMIT;

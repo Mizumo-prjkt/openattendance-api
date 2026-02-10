@@ -284,6 +284,12 @@ async function checkAndInitDB() {
                 WHERE table_name = 'event_staff'
             `);
 
+            const checkEventAttendanceTable = await pool.query(`
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_name = 'event_attendance'
+            `);
+
             // We start nl this arg lmao, i dont like vscrolling this thing
             if (checkColumn.rows.length === 0 || 
                 checkEvents.rows.length === 0 || 
@@ -291,7 +297,8 @@ async function checkAndInitDB() {
                 checkEventEndCol.rows.length === 0 || 
                 checkEventTypeCol.rows.length === 0 ||
                 checkCreatedByCol.rows.length === 0 ||
-                checkEventStaffTable.rows.length === 0) {
+                checkEventStaffTable.rows.length === 0 ||
+                checkEventAttendanceTable.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -597,6 +604,55 @@ app.get('/api/students/list', async (req, res) => {
         client.release();
     }
 });
+
+// [EVENT ATTENDANCE]
+// Get attendance for an event
+app.get('/api/events/attendance/:event_id', async (req, res) => {
+    const { event_id } = req.params;
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT 
+                ea.id, 
+                ea.event_id, 
+                ea.student_id, 
+                ea.time_in, 
+                ea.location,
+                s.first_name, 
+                s.last_name,
+                s.classroom_section as section,
+                s.profile_image_path as profile_image
+            FROM event_attendance ea
+            JOIN students s ON ea.student_id = s.student_id
+            WHERE ea.event_id = $1
+            ORDER BY ea.time_in DESC
+        `;
+        const result = await client.query(query, [event_id]);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT ATTENDANCE] GET ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Manually add attendance record
+app.post('/api/events/attendance/add', async (req, res) => {
+    const { event_id, student_id, location, time_in } = req.body;
+    const client = await pool.connect();
+    try {
+        const query = `INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, $4)`;
+        await client.query(query, [event_id, student_id, location || 'Manual', time_in || new Date()]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT ATTENDANCE] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 
 // [EVENT STAFF]
 // Get staff assigned to event

@@ -38,9 +38,12 @@ const multer = require('multer'); // Added missing requirement based on code usa
 let debugMode = false;
 let logFilePath;
 let argEnv = process.argv.slice(2);
-app.use(bodyParser.json());
+app.use(bodyParser.json({ 
+    limit: '50mb'
+ })); // I am trying to force payload to go max 50mb than standard 100kb
 app.use(bodyParser.urlencoded({
-    extended: true
+    extended: true,
+    limit: '50mb'
 }));
 
 // Initialize Socket.io

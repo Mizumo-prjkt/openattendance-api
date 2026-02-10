@@ -90,6 +90,13 @@ if (!fs.existsSync(studentImageUploadDir)) {
     fs.mkdirSync(studentImageUploadDir, { recursive: true });
 }
 
+// Serve static assets for profile pictures and logos
+// For profile images, school logos etc. stored in runtime
+app.use('/assets/images', express.static(path.join(__dirname, 'runtime/shared/images')));
+// For setup-specific logos (from initial setup)
+app.use('/assets/images/logos', express.static(path.join(__dirname, 'setup/assets/images/logos')));
+
+
 
 // DebugWriteToFile function
 // From @MizProject/Mitra setup.js

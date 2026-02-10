@@ -253,7 +253,13 @@ async function checkAndInitDB() {
                 FROM information_schema.tables
                 WHERE table_name = 'events'
             `);
-            if (checkColumn.rows.length === 0 || checkEvents.rows.length === 0) {
+
+            const checkEventCol = await pool.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events' AND column_name = 'attendance_count'
+            `)
+            if (checkColumn.rows.length === 0 || checkEvents.rows.length === 0 || checkEventCol.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');

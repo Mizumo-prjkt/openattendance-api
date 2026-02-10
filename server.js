@@ -556,7 +556,7 @@ app.post('/api/students/add', async (req, res) => {
         // Dont forget to remove this console.log
         // after finding the bug
         console.log(`[DEBUG] Sanitized Gender: ${sanitizedGender} (Length: ${sanitizedGender.length})`)
-        console.log(`[DEBUG]: GENDER ASCII: ${sanitizedGender.split('').map(c => c.charCodeAt(0).join(', '))}`);
+        console.log(`[DEBUG]: GENDER ASCII: ${sanitizedGender.split('').map(c => c.charCodeAt(0)).join(', ')}`);
         const qr_code_token = crypto.randomUUID();
         const query = `
             INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token)

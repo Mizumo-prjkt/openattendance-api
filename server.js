@@ -278,13 +278,20 @@ async function checkAndInitDB() {
                 WHERE table_name = 'events' AND column_name = 'created_by_staff_id'
             `);
 
+            const checkEventStaffTable = await pool.query(`
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_name = 'event_staff'
+            `);
+
             // We start nl this arg lmao, i dont like vscrolling this thing
             if (checkColumn.rows.length === 0 || 
                 checkEvents.rows.length === 0 || 
                 checkEventCol.rows.length === 0 || 
                 checkEventEndCol.rows.length === 0 || 
                 checkEventTypeCol.rows.length === 0 ||
-                checkCreatedByCol.rows.length === 0) {
+                checkCreatedByCol.rows.length === 0 ||
+                checkEventStaffTable.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -345,7 +352,7 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_status_check");
                 await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_status_check CHECK (status IN ('Active', 'Inactive'))");
 
-                 // 5. Fix Events created_by_staff_id constraint (Make it nullable to prevent crashes)
+                // 5. Fix Events created_by_staff_id constraint (Make it nullable to prevent crashes)
                 const checkCreatedBy = await hotfixClient.query(`
                     SELECT column_name 
                     FROM information_schema.columns 
@@ -590,6 +597,60 @@ app.get('/api/students/list', async (req, res) => {
         client.release();
     }
 });
+
+// [EVENT STAFF]
+// Get staff assigned to event
+app.get('/api/events/staff/:event_id', async (req, res) => {
+    const { event_id } = req.params;
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT es.id, es.event_id, es.staff_id, es.role, es.assigned_at, sa.name, sa.email_address, sa.profile_image_path as profile_image
+            FROM event_staff es
+            JOIN staff_accounts sa ON es.staff_id = sa.staff_id
+            WHERE es.event_id = $1
+            ORDER BY sa.name ASC
+        `;
+        const result = await client.query(query, [event_id]);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT STAFF] GET ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add staff to event
+app.post('/api/events/staff/add', async (req, res) => {
+    const { event_id, staff_id, role } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('INSERT INTO event_staff (event_id, staff_id, role) VALUES ($1, $2, $3)', [event_id, staff_id, role || 'Staff']);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT STAFF] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Remove staff from event
+app.delete('/api/events/staff/delete', async (req, res) => {
+    const { event_id, staff_id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM event_staff WHERE event_id = $1 AND staff_id = $2', [event_id, staff_id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT STAFF] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 
 // Add student
 app.post('/api/students/add', async (req, res) => {

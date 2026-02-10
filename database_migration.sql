@@ -92,5 +92,16 @@ ALTER TABLE events ADD COLUMN IF NOT EXISTS event_type TEXT;
 -- 10. Add created_by_staff_id to events
 ALTER TABLE events ADD COLUMN IF NOT EXISTS created_by_staff_id TEXT;
 
+-- 11. Create event_staff table
+CREATE TABLE IF NOT EXISTS event_staff (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    staff_id TEXT NOT NULL,
+    role TEXT DEFAULT 'Staff',
+    assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE CASCADE,
+    UNIQUE(event_id, staff_id)
+);
 
 COMMIT;

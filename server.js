@@ -1157,6 +1157,24 @@ app.post('/api/staff/add', async (req, res) => {
     }
 });
 
+// Check username availability
+app.post('/api/staff/check-username', async (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+    
+    const client = await pool.connect();
+    try {
+        const result = await client.query('SELECT COUNT(*) FROM staff_login WHERE username = $1', [username]);
+        const count = parseInt(result.rows[0].count);
+        res.json({ available: count === 0 });
+    } catch (err) {
+        debugLogWriteToFile(`[STAFF] CHECK USERNAME ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // Update staff
 app.put('/api/staff/update', async (req, res) => {
     const { id, staff_id, name, email, type, status, profile_image } = req.body;

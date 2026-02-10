@@ -754,7 +754,7 @@ app.get('/api/setup/verify-schema', async (req, res) => {
         const allTablesExist = actions.every(a => a.status === 'exists');
         debugLogWriteToFile('[VERI_SCHEMA]: Schema verification process complete.')
         res.json({
-            sucess: allTablesExist,
+            success: allTablesExist,
             actions: actions
         });
     } catch (error) {

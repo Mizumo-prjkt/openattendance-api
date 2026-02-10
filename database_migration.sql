@@ -22,6 +22,10 @@ ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian'));
 
+-- Fix gender constraint to ensure it matches Title Case
+ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check;
+ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'));
+
 
 -- 3. Update configurations
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_id TEXT;

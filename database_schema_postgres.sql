@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS sections (
     strand TEXT,
     schedule_data JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id)
+    FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
 
 -- 15. SMS Logs

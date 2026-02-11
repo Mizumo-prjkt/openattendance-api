@@ -386,6 +386,16 @@ async function checkAndInitDB() {
                     await hotfixClient.query("ALTER TABLE events ALTER COLUMN created_by_staff_id DROP NOT NULL");
                 }
 
+                // 6. Fix Sections adviser_staff_id constraint (ON DELETE SET NULL)
+                await hotfixClient.query("ALTER TABLE sections DROP CONSTRAINT IF EXISTS sections_adviser_staff_id_fkey");
+                await hotfixClient.query(`
+                    ALTER TABLE sections 
+                    ADD CONSTRAINT sections_adviser_staff_id_fkey 
+                    FOREIGN KEY (adviser_staff_id) 
+                    REFERENCES staff_accounts(staff_id) 
+                    ON DELETE SET NULL
+                `);
+
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
             } catch (err) {

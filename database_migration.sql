@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS sections (
     room_number TEXT,
     schedule_data JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id)
+    FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
 
 -- 5. Create sms_logs table
@@ -129,5 +129,10 @@ CREATE TABLE IF NOT EXISTS event_notes (
     FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
     FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
+
+-- 15. Fix sections foreign key
+ALTER TABLE sections DROP CONSTRAINT IF EXISTS sections_adviser_staff_id_fkey;
+ALTER TABLE sections ADD CONSTRAINT sections_adviser_staff_id_fkey FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL;
+
 
 COMMIT;

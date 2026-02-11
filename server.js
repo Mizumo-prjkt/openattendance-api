@@ -298,6 +298,13 @@ async function checkAndInitDB() {
                 WHERE table_name = 'events' AND column_name = 'event_hash'
             `);
 
+            const checkEventNotesTable = await pool.query(`
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_name = 'event_notes'
+            `);
+
+
             // We start nl this arg lmao, i dont like vscrolling this thing
             if (checkColumn.rows.length === 0 || 
                 checkEvents.rows.length === 0 || 
@@ -307,7 +314,8 @@ async function checkAndInitDB() {
                 checkCreatedByCol.rows.length === 0 ||
                 checkEventStaffTable.rows.length === 0 ||
                 checkEventAttendanceTable.rows.length === 0 ||
-                checkEventHashCol.rows.length === 0) {
+                checkEventHashCol.rows.length === 0 ||
+                checkEventNotesTable.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -1651,6 +1659,61 @@ app.delete('/api/events/delete', async (req, res) => {
         client.release();
     }
 });
+
+// [EVENT NOTES]
+// Get notes for an event
+app.get('/api/events/notes/:event_id', async (req, res) => {
+    const { event_id } = req.params;
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT en.note_id, en.event_id, en.staff_id, en.note_content, en.created_at, sa.name as staff_name
+            FROM event_notes en
+            LEFT JOIN staff_accounts sa ON en.staff_id = sa.staff_id
+            WHERE en.event_id = $1
+            ORDER BY en.created_at DESC
+        `;
+        const result = await client.query(query, [event_id]);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT NOTES] GET ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add note to event
+app.post('/api/events/notes/add', async (req, res) => {
+    const { event_id, staff_id, content } = req.body;
+    const client = await pool.connect();
+    try {
+        const query = `INSERT INTO event_notes (event_id, staff_id, note_content) VALUES ($1, $2, $3)`;
+        await client.query(query, [event_id, staff_id, content]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT NOTES] ADD ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Delete note
+app.delete('/api/events/notes/delete', async (req, res) => {
+    const { note_id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM event_notes WHERE note_id = $1', [note_id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT NOTES] DELETE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 
 // Remove attendance record
 app.delete('/api/events/attendance/delete', async (req, res) => {

@@ -119,5 +119,15 @@ CREATE TABLE IF NOT EXISTS event_attendance (
 ALTER TABLE events ADD COLUMN IF NOT EXISTS event_hash TEXT;
 ALTER TABLE events ADD COLUMN IF NOT EXISTS secure_mode BOOLEAN DEFAULT FALSE;
 
+-- 14. Create event_notes table
+CREATE TABLE IF NOT EXISTS event_notes (
+    note_id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL,
+    staff_id TEXT,
+    note_content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
+    FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
+);
 
 COMMIT;

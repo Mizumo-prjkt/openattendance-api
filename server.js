@@ -1825,4 +1825,126 @@ app.get('/api/reports/daily', async (req, res) => {
     } finally {
         client.release();
     }
-})
+});
+
+
+// [EXPORT]
+// Get Export Permissions and Sections
+app.get('/api/export/permissions', async (req, res) => {
+    const { staff_id } = req.query;
+    if (!staff_id) return res.status(400).json({ error: 'Staff ID required' });
+
+    const client = await pool.connect();
+    try {
+        // 1. Get Staff Role
+        const staffRes = await client.query('SELECT staff_type FROM staff_accounts WHERE staff_id = $1', [staff_id]);
+        if (staffRes.rows.length === 0) return res.status(404).json({ error: 'Staff not found' });
+        
+        const role = staffRes.rows[0].staff_type;
+        let sections = [];
+
+        // 2. Get Sections based on role
+        if (role === 'teacher') {
+            // Only advised sections
+            const secRes = await client.query('SELECT section_id as id, section_name as name FROM sections WHERE adviser_staff_id = $1 ORDER BY section_name', [staff_id]);
+            sections = secRes.rows;
+        } else {
+            // Admin/Staff/Security/StudentCouncil - All sections
+            const secRes = await client.query('SELECT section_id as id, section_name as name FROM sections ORDER BY section_name');
+            sections = secRes.rows;
+        }
+
+        res.json({ role, sections });
+    } catch (err) {
+        debugLogWriteToFile(`[EXPORT] PERMISSIONS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Generate Export Report
+app.get('/api/export/generate', async (req, res) => {
+    const { section_id, month, format } = req.query; // month in YYYY-MM
+    if (!section_id || !month) return res.status(400).json({ error: 'Missing parameters' });
+
+    const client = await pool.connect();
+    try {
+        // 1. Get Section Details
+        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
+        const sectionName = secRes.rows[0].section_name;
+
+        // 2. Get Students in Section
+        const studentsRes = await client.query(`
+            SELECT student_id, last_name, first_name, gender 
+            FROM students 
+            WHERE classroom_section = $1 AND status = 'Active'
+            ORDER BY gender, last_name
+        `, [sectionName]);
+        const students = studentsRes.rows;
+
+        // 3. Get Attendance for Month
+        const startOfMonth = `${month}-01`;
+        const endOfMonth = new Date(new Date(month).getFullYear(), new Date(month).getMonth() + 1, 0).toISOString().split('T')[0];
+
+        const attendanceRes = await client.query(`
+            SELECT student_id, to_char(time_in, 'YYYY-MM-DD') as date
+            FROM present 
+            WHERE time_in >= $1::date AND time_in <= $2::date
+        `, [startOfMonth, endOfMonth]);
+        
+        const attendanceMap = {};
+        attendanceRes.rows.forEach(row => {
+            if (!attendanceMap[row.student_id]) attendanceMap[row.student_id] = new Set();
+            attendanceMap[row.student_id].add(row.date);
+        });
+
+        // 4. Generate CSV
+        // Get all days in month
+        const daysInMonth = [];
+        const date = new Date(startOfMonth);
+        const lastDate = new Date(endOfMonth);
+        while (date <= lastDate) {
+            daysInMonth.push(date.toISOString().split('T')[0]);
+            date.setDate(date.getDate() + 1);
+        }
+
+        let csvContent = `Student ID,Last Name,First Name,Gender,${daysInMonth.join(',')},Total Present\n`;
+
+        students.forEach(student => {
+            const row = [
+                student.student_id,
+                `"${student.last_name}"`,
+                `"${student.first_name}"`,
+                student.gender
+            ];
+            
+            let presentCount = 0;
+            daysInMonth.forEach(day => {
+                if (attendanceMap[student.student_id] && attendanceMap[student.student_id].has(day)) {
+                    row.push('P');
+                    presentCount++;
+                } else {
+                    row.push('A');
+                }
+            });
+            
+            row.push(presentCount);
+            csvContent += row.join(',') + '\n';
+        });
+
+        const filename = `Attendance_${sectionName.replace(/\s+/g, '_')}_${month}.csv`;
+        
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(csvContent);
+
+    } catch (err) {
+        debugLogWriteToFile(`[EXPORT] GENERATE ERROR: ${err.message}`);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+

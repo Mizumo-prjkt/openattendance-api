@@ -1948,3 +1948,17 @@ app.get('/api/export/generate', async (req, res) => {
     }
 });
 
+// [SMS SYSTEM]
+// Get SMS Settings
+app.get('/api/sms/settings', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
+        res.json(result.rows[0] || {});
+    } catch (err) {
+        debugLogWriteToFile(`[SMS] GET SETTINGS ERROR: ${err.message}`);
+        console.log(`[SMS] SMS Configuration Fetch Failed: ${err.message}`)
+    } finally {
+        client.release();
+    }
+});

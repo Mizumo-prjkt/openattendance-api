@@ -6,6 +6,19 @@
 BEGIN;
 
 -- 1. Update sms_provider_settings
+
+CREATE TABLE IF NOT EXISTS sms_provider_settings (
+    id SERIAL PRIMARY KEY,
+    provider_type TEXT DEFAULT 'api',
+    api_url TEXT,
+    api_key TEXT,
+    tty_path TEXT,
+    baud_rate INTEGER,
+    message_template TEXT,
+    curl_config_json JSONB,
+    sms_enabled BOOLEAN DEFAULT FALSE
+);
+
 ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS provider_type TEXT CHECK (provider_type IN ('api', 'usb'));
 ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS api_url TEXT;
 ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS api_key TEXT;

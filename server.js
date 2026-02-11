@@ -939,7 +939,8 @@ app.post('/api/setup/validate-admin', (req, res) => {
                 debugLogWriteToFile(`[VA-ADMIN]: Credentials are good/verified...`)
                 res.json({
                     success: true,
-                    message: 'Admin credentials are valid'
+                    message: 'Admin credentials are valid',
+                    staff_id: admin.staff_id                
                 })
             } else {
                 debugLogWriteToFile(`[VA-ADMIN]: Admin credentials during verification did not match at all... Are you sure you inputted the correct letters?`)

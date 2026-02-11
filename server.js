@@ -1806,10 +1806,12 @@ app.get('/api/reports/daily', async (req, res) => {
         const query = `
             SELECT
                 to_char(d, 'YYYY-MM-DD') as date,
-                (SECLECT COUNT(*) FROM students WHERE status = 'Active') as total,
+                (SELECT COUNT(*) FROM students WHERE status = 'Active') as total,
+                COALESCE(COUNT(DISTINCT p.student_id), 0)::int as present,
+                (SELECT COUNT(*) FROM absent a WHERE a.absent_datetime::date = d::date)::int as absent,
                 COALESCE(COUNT(DISTINCT CASE WHEN p.time_in::time > '08:00:00' THEN p.student_id END), 0)::int as late
             FROM generate_series($1::date, $2::date, '1 day') d
-            LEFT JOIN present p On p.time_in::date = d::date
+            LEFT JOIN present p ON p.time_in::date = d::date
             GROUP BY d
             ORDER BY d DESC
         `;

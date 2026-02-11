@@ -315,7 +315,8 @@ async function checkAndInitDB() {
                 checkEventStaffTable.rows.length === 0 ||
                 checkEventAttendanceTable.rows.length === 0 ||
                 checkEventHashCol.rows.length === 0 ||
-                checkEventNotesTable.rows.length === 0) {
+                checkEventNotesTable.rows.length === 0 ||
+                checkEventHashCol.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -1791,3 +1792,35 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
         client.release();
     }
 });
+
+// [REPORTS]
+// Get daily attendance report
+app.get('/api/reports/daily', async (req, res) => {
+    const { start_date, end_date } = req.query;
+    const client = await pool.connect();
+    try {
+        // Default to prev 30 days if not provided
+        const end = end_date || new Date().toISOString().split('T')[0];
+        const start = start_date || new Date(Date.now() - 30 * 24 *60 * 1000).toISOString().split('T')[0];
+
+        const query = `
+            SELECT
+                to_char(d, 'YYYY-MM-DD') as date,
+                (SECLECT COUNT(*) FROM students WHERE status = 'Active') as total,
+                COALESCE(COUNT(DISTINCT CASE WHEN p.time_in::time > '08:00:00' THEN p.student_id END), 0)::int as late
+            FROM generate_series($1::date, $2::date, '1 day') d
+            LEFT JOIN present p On p.time_in::date = d::date
+            GROUP BY d
+            ORDER BY d DESC
+        `;
+
+        const result = await client.query(query, [start, end]);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[REPORTS]: Daily Report Error: ${err.message}`)
+        console.log(`[REPORT]: Fatal error on the Daily report: ${err.message}`);
+        res.status(500).json({error:err.message});
+    } finally {
+        client.release();
+    }
+})

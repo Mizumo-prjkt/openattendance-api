@@ -2207,3 +2207,48 @@ app.get('/api/database/backup', (req, res) => {
         });
     });
 });
+
+
+
+// Restore Database
+const backupStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, tmpDir);
+    },
+    filename: function (req, file, cb) {
+        cb(null, 'restore-' + Date.now() + '.sql');
+    }
+});
+const uploadBackup = multer({ storage: backupStorage }).single('backup_file');
+
+app.post('/api/database/restore', uploadBackup, (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No backup file provided' });
+    
+    const filePath = req.file.path;
+    const dbUser = process.env.DB_USER || 'postgres';
+    const dbHost = process.env.DB_HOST || 'localhost';
+    const dbName = process.env.DB_NAME || 'openattendance';
+    const dbPassword = process.env.DB_PASSWORD || 'password';
+    const dbPort = process.env.DB_PORT || 5432;
+
+    // Use PGPASSWORD env var to avoid password prompt
+    const env = { ...process.env, PGPASSWORD: dbPassword };
+    // psql command to restore
+    const command = `psql -U ${dbUser} -h ${dbHost} -p ${dbPort} -d ${dbName} -f "${filePath}"`;
+
+    debugLogWriteToFile(`[DATABASE] Starting restore from ${filePath}`);
+
+    exec(command, { env }, (error, stdout, stderr) => {
+        // Cleanup file
+        fs.unlink(filePath, () => {});
+
+        if (error) {
+            debugLogWriteToFile(`[DATABASE] Restore Error: ${error.message}`);
+            return res.status(500).json({ error: 'Restore failed', details: error.message });
+        }
+        
+        debugLogWriteToFile(`[DATABASE] Restore completed successfully`);
+        res.json({ success: true, message: 'Database restored successfully' });
+    });
+});
+

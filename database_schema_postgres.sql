@@ -1,5 +1,5 @@
 -- OpenAttendance PostgreSQL Schema
--- VERSION: 1-mn
+-- VERSION: 1.0.1
 
 -- 1. Benchmark Test
 CREATE TABLE IF NOT EXISTS benchmark_test (

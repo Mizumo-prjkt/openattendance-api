@@ -3,7 +3,7 @@
 -- Run this to update an existing database to the latest structure
 -- Hotfix Requirement!!!
 
--- VERSION: 1-mg
+-- VERSION: 1.0.1
 
 BEGIN;
 

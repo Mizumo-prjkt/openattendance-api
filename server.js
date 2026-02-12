@@ -1610,6 +1610,25 @@ app.delete('/api/staff/delete', async (req, res) => {
     }
 });
 
+// Change password
+app.put('/api/staff/change-password', async (req, res) => {
+    const { staff_id, new_password } = req.body;
+    if (!staff_id || !new_password) return res.status(400).json({ error: 'Missing parameters' });
+
+    const client = await pool.connect();
+    try {
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+        const result = await client.query('UPDATE staff_login SET password = $1 WHERE staff_id = $2', [hashedPassword, staff_id]);
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Staff login record not found' });
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[STAFF] PASSWORD UPDATE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 
 // [EVENTS]
 // Get all events

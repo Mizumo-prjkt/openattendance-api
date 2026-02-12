@@ -2407,6 +2407,64 @@ app.get('/api/system/licenses', (req, res) => {
             }
         };
 
+                // Helper to process license-checker JSON report
+                // M: Ah fuu its misaligned.
+                const processLicenseFile = (filePath, sourceLabel) => {
+                    if (fs.existsSync(filePath)) {
+                        try {
+                            const raw = fs.readFileSync(filePath, 'utf8');
+                            const data = JSON.parse(raw);
+                            Object.keys(data).forEach(key => {
+                                // key format: package@version
+                                const lastAt = key.lastIndexOf('@');
+                                const name = key.substring(0, lastAt);
+                                const version = key.substring(lastAt + 1);
+                                const item = data[key];
+        
+                                let license = item.licenses;
+                                if (Array.isArray(license)) license = license.join(' OR ');
+        
+                                const info = {
+                                    name: name,
+                                    version: version,
+                                    license: license || 'Unknown',
+                                    repository: item.repository,
+                                    source: sourceLabel
+                                };
+                                
+                                if (packagesMap.has(name)) {
+                                    const existing = packagesMap.get(name);
+                                    if (existing.source !== info.source) existing.source = 'Shared';
+                                } else {
+                                    packagesMap.set(name, info);
+                                }
+                            });
+                            return true;
+                        } catch (e) { 
+                            debugLogWriteToFile(`[LICENSES] Error reading license file ${filePath}: ${e.message}`);
+                            return false; 
+                        }
+                    }
+                    return false;
+                };
+
+        // Frontend: Try to read generated report from various possible locations
+        // Priority: Env Var -> Adjacent File (Prod) -> Dev Paths
+                const possiblePaths = [
+                    process.env.FRONTEND_LICENSE_PATH,
+                    path.join(__dirname, 'frontend_licenses.json'),
+                    // This two are redundancies
+                    path.join(__dirname, '../openattendance-frontend/public/licenses.json'),
+                    path.join(__dirname, '../openattendance-frontend/dist/licenses.json')
+                ];
+
+        for (const p of possiblePaths) {
+            if (p && processLicenseFile(p, 'Frontend')) {
+                break; // Stop once we find a valid file
+            }
+        }
+
+
         scanDir(__dirname, 'Backend');
         scanDir(path.join(__dirname, '../openattendance-frontend'), 'Frontend');
 

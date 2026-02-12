@@ -3,6 +3,8 @@
 -- Run this to update an existing database to the latest structure
 -- Hotfix Requirement!!!
 
+-- VERSION: VERSION_ID
+
 BEGIN;
 
 -- 1. Update sms_provider_settings

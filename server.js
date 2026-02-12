@@ -2208,6 +2208,34 @@ app.get('/api/database/backup', (req, res) => {
     });
 });
 
+// Backup Database to Server (Local)
+app.post('/api/database/backup-local', (req, res) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `server_backup_${timestamp}.sql`;
+    const filePath = path.join(backupsDir, filename);
+
+    const dbUser = process.env.DB_USER || 'postgres';
+    const dbHost = process.env.DB_HOST || 'localhost';
+    const dbName = process.env.DB_NAME || 'openattendance';
+    const dbPassword = process.env.DB_PASSWORD || 'password';
+    const dbPort = process.env.DB_PORT || 5432;
+
+    // Use PGPASSWORD env var to avoid password prompt
+    const env = { ...process.env, PGPASSWORD: dbPassword };
+    const command = `pg_dump -U ${dbUser} -h ${dbHost} -p ${dbPort} -F p ${dbName} > "${filePath}"`;
+
+    debugLogWriteToFile(`[DATABASE] Starting local server backup to ${filePath}`);
+
+    exec(command, { env }, (error, stdout, stderr) => {
+        if (error) {
+            debugLogWriteToFile(`[DATABASE] Local Backup Error: ${error.message}`);
+            return res.status(500).json({ error: 'Backup generation failed', details: error.message });
+        }
+        
+        debugLogWriteToFile(`[DATABASE] Local Backup created successfully at ${filePath}`);
+        res.json({ success: true, message: 'Backup saved to server storage.', path: filePath, filename: filename });
+    });
+});
 
 
 // Restore Database

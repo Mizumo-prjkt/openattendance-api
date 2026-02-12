@@ -152,6 +152,8 @@ ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_name TEXT;
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_title TEXT DEFAULT 'School Principal';
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '2024-2025';
 
+-- 17. Maintenance Mode
+ALTER TABLE configurations ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE;
 
 
 COMMIT;

@@ -2134,7 +2134,7 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year } = req.body;
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode } = req.body;
     
     const client = await pool.connect();
     try {
@@ -2145,25 +2145,25 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
              // Insert (Only if table is empty)
              const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
              await client.query(
-                 `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory)
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath]
+                 `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true']
              );
         } else {
             // Update existing row
             const id = check.rows[0].config_id;
             let query = `
                 UPDATE configurations 
-                SET school_name = $1, school_id = $2, country_code = $3, address = $4, principal_name = $5, principal_title = $6, school_year = $7
+                SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year)
             `;
-            const params = [school_name, school_id, country_code, address, principal_name, principal_title, school_year];
+            const params = [school_name || null, school_id || null, country_code || null, address || null, principal_name || null, principal_title || null, school_year || null];
             
             if (req.file) {
-                query += `, logo_directory = $8 WHERE config_id = $9`;
-                params.push(`/assets/images/logos/${req.file.filename}`, id);
+                query += `, logo_directory = $8, maintenance_mode = COALESCE($9, maintenance_mode) WHERE config_id = $10`;
+                params.push(`/assets/images/logos/${req.file.filename}`, id, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id );
             } else {
-                query += ` WHERE config_id = $8`;
-                params.push(id);
+                query += `, maintenance_mode = COALESCE($8, maintenance_mode) WHERE config_id = $9`;
+                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id);
             }
             await client.query(query, params);
         }

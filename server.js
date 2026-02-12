@@ -359,6 +359,10 @@ async function checkAndInitDB() {
                     console.log('Database migration applied successfully.');
                     debugLogWriteToFile('[POSTGRES]: Database migration applied successfully.');
                 }
+
+                if (checkConfigVersion.rows.length === 0) {
+                    await pool.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS db_version TEXT DEFAULT '0.0.0'`);
+                }
             }
 
             // [HOTFIX] Force Gender Constraint Fix
@@ -1359,8 +1363,15 @@ app.post('/api/setup/migrate', async (req, res) => {
         const newVersion = versionMatch ? versionMatch[1] : null;
 
         if (newVersion) {
-            const configRes = await client.query('SELECT db_version FROM configurations LIMIT 1');
-            const currentVersion = configRes.rows[0]?.db_version || '0.0.0';
+
+            // First we check if the column exists to avoid crash on old DBs
+            const checkCol = await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'configurations' and column_name = 'db_version'`);
+            
+            let currentVersion = '0.0.0';
+            if (checkCol.rows.length > 0) {
+                const configRes = await client.query('SELECT db_version FROM configurations LIMIT 1');
+                currentVersion = configRes.rows[0]?.db_version || '0.0.0';
+            }
             
             if (compareVersions(newVersion, currentVersion) <= 0) {
                 throw new Error(`Migration version: (${newVersion}) is not greater than current database version. Any downgrades or re-runs are not allowed.`);
@@ -1369,7 +1380,10 @@ app.post('/api/setup/migrate', async (req, res) => {
         
         await client.query(migrationSql);
 
-        if (newVersion) await client.query(`UPDATE configurations SET db_version = $1`, [newVersion]);
+        if (newVersion) {
+            await client.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS db_version TEXT DEFAULT '0.0.0'`);
+            await client.query(`UPDATE configurations SET db_version = $1`, [newVersion]);
+        }
 
         
         debugLogWriteToFile(`[MIGRATE]: Migration executed successfully.`);

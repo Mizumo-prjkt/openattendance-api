@@ -1,21 +1,9 @@
 -- OpenAttendance PostgreSQL Schema
 -- VERSION: 1.0.1
 
--- 1. Benchmark Test
-CREATE TABLE IF NOT EXISTS benchmark_test (
-    id SERIAL PRIMARY KEY,
-    col_text1 TEXT,
-    col_text2 TEXT,
-    col_int1 INTEGER,
-    col_int2 INTEGER,
-    col_real1 REAL,
-    col_real2 REAL,
-    col_blob1 BYTEA,
-    col_date1 DATE,
-    col_bool1 BOOLEAN
-);
 
--- 2. Students
+
+-- 1. Students
 CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
     last_name TEXT,
@@ -34,7 +22,7 @@ CREATE TABLE IF NOT EXISTS students (
     gender TEXT CHECK (gender IN('Male', 'Female', 'Other'))
 );
 
--- 3. Configurations
+-- 2. Configurations
 CREATE TABLE IF NOT EXISTS configurations (
     config_id SERIAL PRIMARY KEY,
     school_name TEXT NOT NULL,
@@ -50,7 +38,7 @@ CREATE TABLE IF NOT EXISTS configurations (
     school_year TEXT DEFAULT '2026-2027'
 );
 
--- 4. Staff Accounts (Created before others to satisfy FK constraints)
+-- 3. Staff Accounts (Created before others to satisfy FK constraints)
 CREATE TABLE IF NOT EXISTS staff_accounts (
     id SERIAL PRIMARY KEY,
     staff_id TEXT NOT NULL UNIQUE,
@@ -64,7 +52,7 @@ CREATE TABLE IF NOT EXISTS staff_accounts (
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1))
 );
 
--- 5. Excused
+-- 4. Excused
 CREATE TABLE IF NOT EXISTS excused (
     excused_id SERIAL PRIMARY KEY,
     student_id TEXT NOT NULL,
@@ -79,7 +67,7 @@ CREATE TABLE IF NOT EXISTS excused (
     FOREIGN KEY (requester_staff_id) REFERENCES staff_accounts(staff_id)
 );
 
--- 6. Present
+-- 5. Present
 CREATE TABLE IF NOT EXISTS present (
     present_id SERIAL PRIMARY KEY,
     student_id TEXT NOT NULL,
@@ -90,7 +78,7 @@ CREATE TABLE IF NOT EXISTS present (
     FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
 );
 
--- 7. Absent
+-- 6. Absent
 CREATE TABLE IF NOT EXISTS absent (
     absent_id SERIAL PRIMARY KEY,
     student_id TEXT NOT NULL,
@@ -101,7 +89,7 @@ CREATE TABLE IF NOT EXISTS absent (
     FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
 );
 
--- 8. Staff Login Credentials
+-- 7. Staff Login Credentials
 CREATE TABLE IF NOT EXISTS staff_login (
     login_id SERIAL PRIMARY KEY,
     staff_id TEXT NOT NULL UNIQUE,
@@ -110,7 +98,7 @@ CREATE TABLE IF NOT EXISTS staff_login (
     FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE CASCADE
 );
 
--- 9. Events
+-- 8. Events
 CREATE TABLE IF NOT EXISTS events (
     event_id SERIAL PRIMARY KEY,
     event_name TEXT NOT NULL,
@@ -125,7 +113,7 @@ CREATE TABLE IF NOT EXISTS events (
     FOREIGN KEY (created_by_staff_id) REFERENCES staff_accounts(staff_id)
 );
 
--- 10. Event Attendees
+-- 9. Event Attendees
 CREATE TABLE IF NOT EXISTS event_attendees (
     event_attendee_id SERIAL PRIMARY KEY,
     event_id INTEGER NOT NULL,
@@ -139,7 +127,7 @@ CREATE TABLE IF NOT EXISTS event_attendees (
     UNIQUE (event_id, student_id)
 );
 
--- 11. Granular Daily Attendance Logs
+-- 10. Granular Daily Attendance Logs
 CREATE TABLE IF NOT EXISTS daily_attendance_logs (
     log_id SERIAL PRIMARY KEY,
     student_id TEXT NOT NULL,
@@ -153,7 +141,7 @@ CREATE TABLE IF NOT EXISTS daily_attendance_logs (
     FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
 );
 
--- 12. System Logs
+-- 11. System Logs
 CREATE TABLE IF NOT EXISTS system_logs (
     log_id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -163,7 +151,7 @@ CREATE TABLE IF NOT EXISTS system_logs (
     details TEXT
 );
 
--- 13. SMS Provider Settings
+-- 12. SMS Provider Settings
 CREATE TABLE IF NOT EXISTS sms_provider_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     provider_type TEXT CHECK (provider_type IN ('api', 'usb')),
@@ -179,7 +167,7 @@ CREATE TABLE IF NOT EXISTS sms_provider_settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 14. Sections (Classes)
+-- 13. Sections (Classes)
 CREATE TABLE IF NOT EXISTS sections (
     section_id SERIAL PRIMARY KEY,
     section_name TEXT NOT NULL UNIQUE,
@@ -192,7 +180,7 @@ CREATE TABLE IF NOT EXISTS sections (
     FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
 
--- 15. SMS Logs
+-- 14. SMS Logs
 CREATE TABLE IF NOT EXISTS sms_logs (
     sms_id SERIAL PRIMARY KEY,
     recipient_number TEXT NOT NULL,
@@ -204,3 +192,34 @@ CREATE TABLE IF NOT EXISTS sms_logs (
     error_message TEXT,
     FOREIGN KEY (related_student_id) REFERENCES students(student_id)
 );
+
+-- 15. Single Index Performance Table
+CREATE TABLE IF NOT EXISTS perf_test_single_idx (
+    id SERIAL PRIMARY KEY,
+    data TEXT,
+    indexed_col INT
+);
+CREATE INDEX IF NOT EXISTS idx_perf_single ON perf_test_single_idx(indexed_col);
+
+-- 16. Multi-Index Performance Table
+CREATE TABLE IF NOT EXISTS perf_test_multi_idx (
+    id SERIAL PRIMARY KEY,
+    data TEXT,
+    col1 INT,
+    col2 INT,
+    col3 TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_perf_multi_1 ON perf_test_multi_idx(col1);
+CREATE INDEX IF NOT EXISTS idx_perf_multi_2 ON perf_test_multi_idx(col2);
+CREATE INDEX IF NOT EXISTS idx_perf_multi_3 ON perf_test_multi_idx(col3);
+
+-- 17. Random Access Tables
+CREATE TABLE IF NOT EXISTS perf_test_random_1 (id SERIAL PRIMARY KEY, val TEXT);
+CREATE TABLE IF NOT EXISTS perf_test_random_2 (id SERIAL PRIMARY KEY, val TEXT);
+CREATE TABLE IF NOT EXISTS perf_test_random_3 (id SERIAL PRIMARY KEY, val TEXT);
+
+-- 18. Barrage/Concurrency Table
+CREATE TABLE IF NOT EXISTS perf_test_barrage (id SERIAL PRIMARY KEY, val TIMESTAMP);
+
+-- 19. Size Growth Table
+CREATE TABLE IF NOT EXISTS perf_test_size_growth (id SERIAL PRIMARY KEY, payload TEXT);

@@ -2548,3 +2548,127 @@ app.get('/api/system/licenses', (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// [BENCHMARK-COMPREHENSIVE]
+// Comprehensive Database Performance Test
+app.get('/api/benchmark/comprehensive', async (req, res) => {
+    const client = await pool.connect();
+    const results = {};
+    
+    try {
+        // 0. Setup: Ensure Benchmark Tables Exist
+        const check = await client.query("SELECT to_regclass('public.perf_test_single_idx')");
+        if (!check.rows[0].to_regclass) {
+             debugLogWriteToFile(`[BENCHMARK] Tables missing. Applying benchmark schema...`);
+             const schemaPath = path.join(__dirname, 'database_benchmark_schema.sql');
+             if (fs.existsSync(schemaPath)) {
+                 const sql = fs.readFileSync(schemaPath, 'utf8');
+                 await client.query(sql);
+             } else {
+                 throw new Error('Benchmark schema file missing.');
+             }
+        }
+
+        // 1. One by one index writing, reading, and changing
+        {
+            const start = Date.now();
+            await client.query('TRUNCATE perf_test_single_idx');
+            for(let i=0; i<100; i++) {
+                await client.query('INSERT INTO perf_test_single_idx (data, indexed_col) VALUES ($1, $2)', ['test_data', i]);
+                await client.query('SELECT * FROM perf_test_single_idx WHERE indexed_col = $1', [i]);
+                await client.query('UPDATE perf_test_single_idx SET data = $1 WHERE id = $2', ['updated', i+1]);
+            }
+            results.single_index_rw_100_ops = `${Date.now() - start}ms`;
+        }
+
+        // 2. Multiple asynchronous write, read, and delete
+        {
+            const start = Date.now();
+            await client.query('TRUNCATE perf_test_multi_idx');
+            const promises = [];
+            // Write
+            for(let i=0; i<200; i++) {
+                promises.push(client.query('INSERT INTO perf_test_multi_idx (data, col1, col2, col3) VALUES ($1, $2, $3, $4)', ['async', i, i, 'text']));
+            }
+            await Promise.all(promises);
+            // Read
+            const readPromises = [];
+            for(let i=0; i<200; i++) {
+                readPromises.push(client.query('SELECT * FROM perf_test_multi_idx WHERE col1 = $1', [i]));
+            }
+            await Promise.all(readPromises);
+            // Delete
+            const delPromises = [];
+            for(let i=0; i<200; i++) {
+                delPromises.push(client.query('DELETE FROM perf_test_multi_idx WHERE col1 = $1', [i]));
+            }
+            await Promise.all(delPromises);
+            
+            results.async_multi_rw_delete_200_batch = `${Date.now() - start}ms`;
+        }
+
+        // 3. Random write and read on random tables
+        {
+            const start = Date.now();
+            const tables = ['perf_test_random_1', 'perf_test_random_2', 'perf_test_random_3'];
+            for(let i=0; i<150; i++) {
+                const tbl = tables[Math.floor(Math.random() * tables.length)];
+                await client.query(`INSERT INTO ${tbl} (val) VALUES ($1)`, ['random_val']);
+                await client.query(`SELECT * FROM ${tbl} LIMIT 1`);
+            }
+            results.random_table_io_150_ops = `${Date.now() - start}ms`;
+        }
+
+        // 4. Index Speed Comparison (Single vs Multi Overhead)
+        // Using data from previous steps logic, we run a fresh micro-test
+        {
+             const startSingle = Date.now();
+             for(let i=0; i<100; i++) await client.query('INSERT INTO perf_test_single_idx (data, indexed_col) VALUES ($1, $2)', ['comp', i]);
+             const timeSingle = Date.now() - startSingle;
+
+             const startMulti = Date.now();
+             for(let i=0; i<100; i++) await client.query('INSERT INTO perf_test_multi_idx (data, col1, col2, col3) VALUES ($1, $2, $3, $4)', ['comp', i, i, 't']);
+             const timeMulti = Date.now() - startMulti;
+             
+             results.index_overhead_100_inserts = {
+                 single_index: `${timeSingle}ms`,
+                 multi_index: `${timeMulti}ms`
+             };
+        }
+
+        // 5. Barrage of commands (I/O Stress)
+        {
+            const start = Date.now();
+            const barrage = [];
+            for(let i=0; i<1000; i++) {
+                barrage.push(client.query('INSERT INTO perf_test_barrage (val) VALUES (NOW())'));
+            }
+            await Promise.all(barrage);
+            results.barrage_io_1000_concurrent = `${Date.now() - start}ms`;
+        }
+
+        // 6. Size Growth & Table Growth
+        {
+            // Size Growth: 48KB to 4096KB (4MB)
+            await client.query('TRUNCATE perf_test_size_growth');
+            const startSize = Date.now();
+            const payload = 'x'.repeat(4096); // 4KB payload
+            // Insert 1024 rows to reach ~4MB
+            for(let i=0; i<1024; i++) {
+                await client.query('INSERT INTO perf_test_size_growth (payload) VALUES ($1)', [payload]);
+            }
+            const sizeRes = await client.query("SELECT pg_size_pretty(pg_total_relation_size('perf_test_size_growth')) as size");
+            results.size_growth_4mb = {
+                time: `${Date.now() - startSize}ms`,
+                final_size: sizeRes.rows[0].size
+            };
+        }
+
+        res.json({ success: true, benchmark: results });
+    } catch (err) {
+        debugLogWriteToFile(`[BENCHMARK] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

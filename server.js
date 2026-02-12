@@ -2336,6 +2336,35 @@ app.post('/api/database/restore', uploadBackup, (req, res) => {
     });
 });
 
+// Get Database Stats
+app.get('/api/database/stats', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const query = `
+            SELECT
+                relname as table_name,
+                n_live_tup as row_count,
+                pg_size_pretty(pg_total_relation_size(relid)) as total_size
+            FROM pg_stat_user_tables
+            ORDER BY pg_total_relation_size(relid) DESC;
+        `;
+        const result = await client.query(query);
+        
+        const stats = result.rows.map(row => ({
+            table: row.table_name,
+            rows: parseInt(row.row_count || 0),
+            size: row.total_size
+        }));
+        
+        res.json(stats);
+    } catch (err) {
+        debugLogWriteToFile(`[DATABASE] STATS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // [LICENSES]
 // Get Open Source Licenses
 app.get('/api/system/licenses', (req, res) => {

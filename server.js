@@ -2096,3 +2096,64 @@ app.get('/api/id-cards/list', async (req, res) => {
         client.release();
     }
 });
+
+// [CONF-GET]
+// Get Configuration
+app.get('/api/setup/configuration', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query('SELECT * FROM configurations LIMIT 1');
+        res.json(result.rows[0] || {});
+    } catch (err) {
+        debugLogWriteToFile(`[CONF] GET ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// [CONF-UPDATE]
+// Update Configuration
+app.put('/api/setup/configuration', upload, async (req, res) => {
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year } = req.body;
+    
+    const client = await pool.connect();
+    try {
+        // Check if config exists (Single Row Policy)
+        const check = await client.query('SELECT config_id FROM configurations LIMIT 1');
+        
+        if (check.rows.length === 0) {
+             // Insert (Only if table is empty)
+             const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
+             await client.query(
+                 `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath]
+             );
+        } else {
+            // Update existing row
+            const id = check.rows[0].config_id;
+            let query = `
+                UPDATE configurations 
+                SET school_name = $1, school_id = $2, country_code = $3, address = $4, principal_name = $5, principal_title = $6, school_year = $7
+            `;
+            const params = [school_name, school_id, country_code, address, principal_name, principal_title, school_year];
+            
+            if (req.file) {
+                query += `, logo_directory = $8 WHERE config_id = $9`;
+                params.push(`/assets/images/logos/${req.file.filename}`, id);
+            } else {
+                query += ` WHERE config_id = $8`;
+                params.push(id);
+            }
+            await client.query(query, params);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[CONF] UPDATE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+

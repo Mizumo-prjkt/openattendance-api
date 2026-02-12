@@ -2376,9 +2376,11 @@ app.post('/api/database/maintenance/:task', async (req, res) => {
             debugLogWriteToFile(`[MAINTENANCE] VACUUM ANALYZE executed.`);
             res.json({ message: 'Vacuum & Analyze completed successfully.' });
         } else if (task === 'reindex') {
-            const dbName = process.env.DB_NAME || 'openattendance';
-            await client.query(`REINDEX DATABASE "${dbName}"`);
-            debugLogWriteToFile(`[MAINTENANCE] REINDEX DATABASE executed.`);
+            const tables = await client.query(`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`);
+            for (const row of tables.rows) {
+                await client.query(`REINDEX TABLE "${row.tablename}"`);
+            }
+            debugLogWriteToFile(`[MAINTENANCE] REINDEX executed on public tables.`);
             res.json({ message: 'Database Reindex completed successfully.' });
         } else if (task === 'logs') {
             const logDir = path.join(__dirname, 'data', 'logs');
@@ -2404,7 +2406,6 @@ app.post('/api/database/maintenance/:task', async (req, res) => {
         client.release();
     }
 });
-
 
 // [LICENSES]
 // Get Open Source Licenses

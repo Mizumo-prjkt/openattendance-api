@@ -1810,6 +1810,43 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
     }
 });
 
+// Export Section Tickets (ZIP of QR Codes)
+app.get('/api/sections/export-tickets/:section_id', async (req, res) => {
+    const { section_id } = req.params;
+    const client = await pool.connect();
+    try {
+        // 1. Get Section Name
+        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
+        const sectionName = secRes.rows[0].section_name;
+
+        // 2. Get Students
+        const studentsRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE classroom_section = $1 AND status = 'Active'", [sectionName]);
+        const students = studentsRes.rows;
+
+        // 3. Zip
+        const filename = `tickets_${sectionName.replace(/\s+/g, '-')}.zip`;
+        res.attachment(filename);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        archive.on('error', (err) => { throw err; });
+        archive.pipe(res);
+
+        for (const student of students) {
+            const qrData = student.student_id;
+            const buffer = await QRCode.toBuffer(qrData, { width: 300, margin: 2 });
+            const studentName = `${student.first_name}-${student.last_name}`.replace(/\s+/g, '-');
+            const imgFilename = `${studentName}.png`;
+            archive.append(buffer, { name: imgFilename });
+        }
+        await archive.finalize();
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] EXPORT TICKETS ERROR: ${err.message}`);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // [REPORTS]
 // Get daily attendance report
 app.get('/api/reports/daily', async (req, res) => {

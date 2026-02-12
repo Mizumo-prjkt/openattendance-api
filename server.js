@@ -2031,7 +2031,7 @@ app.get('/api/id-cards/list', async (req, res) => {
     const client = await pool.connect();
     try {
         // Config
-        const configRes = await client.query('SELECT school_name, principal_name, principal_title, school_year FROM configurations LIMIT 1');
+        const configRes = await client.query('SELECT school_name, principal_name, principal_title, school_year, logo_directory FROM configurations LIMIT 1');
         const config = configRes.rows[0] || {
             school_name: 'School',
             principal_name: 'Principal Name',

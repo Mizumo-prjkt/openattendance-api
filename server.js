@@ -221,6 +221,20 @@ pool.connect((err, client, release) => {
     checkAndInitDB();
 });
 
+// Helper: Compare SemVer-like versions
+function compareVersions(v1, v2) {
+    const p1 = v1.split('.').map(Number);
+    const p2 = v2.split('.').map(Number);
+    for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+        const n1 = p1[i] || 0;
+        const n2 = p2[i] || 0;
+        if (n1 > n2) return 1;
+        if (n1 < n2) return -1;
+    }
+    return 0;
+}
+
+
 async function checkAndInitDB() {
     try {
         const res = await pool.query(`
@@ -238,6 +252,11 @@ async function checkAndInitDB() {
             const schemaSql = fs.readFileSync(schemaPath, 'utf-8');
 
             await pool.query(schemaSql);
+            // Set initial version if present in the schema file
+            const versionMatch = schemaSql.match(/--\s*Version:\s*(\d+(\.\d+)*)/i);
+            if (versionMatch) {
+                await pool.query(`UPDATE configurations SET db_version = '${versionMatch[1]}'`);
+            }
             console.log(`Database Created and initialized successfully`);
             debugLogWriteToFile(`[POSTGRES]: DB created and initialized successfully...`);
         } else {
@@ -310,6 +329,12 @@ async function checkAndInitDB() {
                 WHERE table_name = 'configurations' AND column_name = 'principal_name'
             `);
 
+            const checkConfigVersion = await pool.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'configurations' AND column_name = 'db_version'
+            `)
+
 
             // We start nl this arg lmao, i dont like vscrolling this thing
             if (checkColumn.rows.length === 0 || 
@@ -323,7 +348,8 @@ async function checkAndInitDB() {
                 checkEventHashCol.rows.length === 0 ||
                 checkEventNotesTable.rows.length === 0 ||
                 checkEventHashCol.rows.length === 0 ||
-                checkConfigPrincipal.rows.length === 0 ) {
+                checkConfigPrincipal.rows.length === 0 ||
+                checkConfigVersion.rows.length === 0 ) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -1327,8 +1353,24 @@ app.post('/api/setup/migrate', async (req, res) => {
              throw new Error("Migration file not found!");
         }
         const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+
+        // Version check
+        const versionMatch = migrationSql.match(/--\s*Version:\s*(\d+(\.\d+)*)/i);
+        const newVersion = versionMatch ? versionMatch[1] : null;
+
+        if (newVersion) {
+            const configRes = await client.query('SELECT db_version FROM configurations LIMIT 1');
+            const currentVersion = configRes.rows[0]?.db_version || '0.0.0';
+            
+            if (compareVersions(newVersion, currentVersion) <= 0) {
+                throw new Error(`Migration version: (${newVersion}) is not greater than current database version. Any downgrades or re-runs are not allowed.`);
+            }
+        }
         
         await client.query(migrationSql);
+
+        if (newVersion) await client.query(`UPDATE configurations SET db_version = $1`, [newVersion]);
+
         
         debugLogWriteToFile(`[MIGRATE]: Migration executed successfully.`);
         res.json({

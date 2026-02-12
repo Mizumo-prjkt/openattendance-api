@@ -2365,6 +2365,47 @@ app.get('/api/database/stats', async (req, res) => {
     }
 });
 
+// [MAINTENANCE]
+// Perform Database Maintenance Tasks
+app.post('/api/database/maintenance/:task', async (req, res) => {
+    const { task } = req.params;
+    const client = await pool.connect();
+    try {
+        if (task === 'vacuum') {
+            await client.query('VACUUM ANALYZE');
+            debugLogWriteToFile(`[MAINTENANCE] VACUUM ANALYZE executed.`);
+            res.json({ message: 'Vacuum & Analyze completed successfully.' });
+        } else if (task === 'reindex') {
+            const dbName = process.env.DB_NAME || 'openattendance';
+            await client.query(`REINDEX DATABASE "${dbName}"`);
+            debugLogWriteToFile(`[MAINTENANCE] REINDEX DATABASE executed.`);
+            res.json({ message: 'Database Reindex completed successfully.' });
+        } else if (task === 'logs') {
+            const logDir = path.join(__dirname, 'data', 'logs');
+            if (fs.existsSync(logDir)) {
+                const files = fs.readdirSync(logDir);
+                for (const file of files) {
+                    try {
+                        fs.unlinkSync(path.join(logDir, file));
+                    } catch (e) {
+                        // Ignore errors (e.g. file in use)
+                    }
+                }
+            }
+            debugLogWriteToFile(`[MAINTENANCE] System logs truncated.`);
+            res.json({ message: 'System logs cleared.' });
+        } else {
+            res.status(400).json({ error: 'Invalid maintenance task' });
+        }
+    } catch (err) {
+        debugLogWriteToFile(`[MAINTENANCE] ERROR (${task}): ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+
 // [LICENSES]
 // Get Open Source Licenses
 app.get('/api/system/licenses', (req, res) => {

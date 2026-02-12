@@ -2336,3 +2336,86 @@ app.post('/api/database/restore', uploadBackup, (req, res) => {
     });
 });
 
+// [LICENSES]
+// Get Open Source Licenses
+app.get('/api/system/licenses', (req, res) => {
+    try {
+        const packagesMap = new Map();
+        const unknownLicenses = [];
+
+        const scanDir = (basePath, sourceLabel) => {
+            const modulesPath = path.join(basePath, 'node_modules');
+            if (!fs.existsSync(modulesPath)) return;
+
+            const processPackage = (pkgPath) => {
+                const jsonPath = path.join(pkgPath, 'package.json');
+                if (fs.existsSync(jsonPath)) {
+                    try {
+                        const pkg = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+                        if (!pkg.name) return;
+                        
+                        let license = pkg.license;
+                        if (!license && pkg.licenses) {
+                            // Handle array or object format
+                            if (Array.isArray(pkg.licenses)) {
+                                license = pkg.licenses.map(l => (typeof l === 'object' ? l.type : l)).join(' OR ');
+                            } else if (typeof pkg.licenses === 'object') {
+                                license = pkg.licenses.type;
+                            }
+                        }
+                        
+                        const info = {
+                            name: pkg.name,
+                            version: pkg.version,
+                            license: license || null,
+                            repository: pkg.repository ? (pkg.repository.url || pkg.repository) : null,
+                            source: sourceLabel
+                        };
+
+                        if (!info.license) {
+                            // Check if we already have this package with a license from another source
+                            if (!packagesMap.has(pkg.name)) {
+                                unknownLicenses.push(info);
+                            }
+                        } else {
+                            // Merge logic: If exists, update source to 'Shared', otherwise set
+                            if (packagesMap.has(pkg.name)) {
+                                const existing = packagesMap.get(pkg.name);
+                                if (existing.source !== info.source) existing.source = 'Shared';
+                            } else {
+                                packagesMap.set(pkg.name, info);
+                            }
+                        }
+                    } catch (e) { /* ignore read errors */ }
+                }
+            };
+
+            const items = fs.readdirSync(modulesPath);
+            for (const item of items) {
+                if (item.startsWith('.')) continue;
+                if (item.startsWith('@')) {
+                    const scopePath = path.join(modulesPath, item);
+                    if (fs.existsSync(scopePath) && fs.statSync(scopePath).isDirectory()) {
+                        const scopedItems = fs.readdirSync(scopePath);
+                        for (const scopedItem of scopedItems) {
+                            processPackage(path.join(scopePath, scopedItem));
+                        }
+                    }
+                } else {
+                    processPackage(path.join(modulesPath, item));
+                }
+            }
+        };
+
+        scanDir(__dirname, 'Backend');
+        scanDir(path.join(__dirname, '../openattendance-frontend'), 'Frontend');
+
+        res.json({
+            licensed: Array.from(packagesMap.values()).sort((a, b) => a.name.localeCompare(b.name)),
+            unknown: unknownLicenses
+        });
+    } catch (err) {
+        debugLogWriteToFile(`[LICENSES] ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
+});

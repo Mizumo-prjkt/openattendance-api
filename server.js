@@ -1962,3 +1962,67 @@ app.get('/api/sms/settings', async (req, res) => {
         client.release();
     }
 });
+
+// [ID CARDS]
+// Get all users for ID generation
+app.get('/api/id-cards/list', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        // Students
+        const studentsQuery = `
+            SELECT 
+                student_id, first_name, last_name, classroom_section, 
+                emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+                profile_image_path
+            FROM students 
+            WHERE status = 'Active'
+            ORDER BY last_name ASC
+        `;
+        const studentsRes = await client.query(studentsQuery);
+        
+        // Staff
+        const staffQuery = `
+            SELECT 
+                staff_id, name, staff_type, profile_image_path
+            FROM staff_accounts 
+            WHERE active = 1
+            ORDER BY name ASC
+        `;
+        const staffRes = await client.query(staffQuery);
+
+        const users = [];
+
+        // Process Students
+        studentsRes.rows.forEach(s => {
+            users.push({
+                id: `student-${s.student_id}`,
+                type: 'student',
+                name: `${s.first_name} ${s.last_name}`,
+                idNumber: s.student_id,
+                section: s.classroom_section || 'Unassigned',
+                emergency: s.emergency_contact_name ? `${s.emergency_contact_name} (${s.emergency_contact_relationship || 'Contact'}) - ${s.emergency_contact_phone || ''}` : 'N/A',
+                profile_image: s.profile_image_path
+            });
+        });
+
+        // Process Staff
+        staffRes.rows.forEach(s => {
+            users.push({
+                id: `staff-${s.staff_id}`,
+                type: 'staff',
+                name: s.name,
+                idNumber: s.staff_id,
+                role: s.staff_type.charAt(0).toUpperCase() + s.staff_type.slice(1).replace('_', ' '),
+                emergency: 'N/A', // Staff DB doesn't have emergency contact yet
+                profile_image: s.profile_image_path
+            });
+        });
+
+        res.json(users);
+    } catch (err) {
+        debugLogWriteToFile(`[ID CARDS] LIST ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

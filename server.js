@@ -2452,7 +2452,7 @@ app.get('/api/system/licenses', (req, res) => {
         // Priority: Env Var -> Adjacent File (Prod) -> Dev Paths
                 const possiblePaths = [
                     process.env.FRONTEND_LICENSE_PATH,
-                    path.join(__dirname, 'frontend_licenses.json'),
+                    path.join(__dirname, 'ff-licenses.json'),
                     // This two are redundancies
                     path.join(__dirname, '../openattendance-frontend/public/licenses.json'),
                     path.join(__dirname, '../openattendance-frontend/dist/licenses.json')

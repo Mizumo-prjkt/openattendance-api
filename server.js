@@ -397,6 +397,16 @@ async function checkAndInitDB() {
                     ON DELETE SET NULL
                 `);
 
+                // Just manual curl -X POST "http://localhost:10002/api/setup/migrate"
+                // or any port set by vite port or env set.
+                // Because using this area is really making the codebase dirty as hell, and now
+                // this source code is hell
+                // // 7. Run this code to alter table configurations on the spot
+                // await hotfixClient.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_name TEXT;`);
+                // await hotfixClient.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_title TEXT DEFAULT 'School Principal';`);
+                // await hotfixClient.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '2024-2025';`);
+
+
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
             } catch (err) {
@@ -1968,6 +1978,14 @@ app.get('/api/sms/settings', async (req, res) => {
 app.get('/api/id-cards/list', async (req, res) => {
     const client = await pool.connect();
     try {
+        // Config
+        const configRes = await client.query('SELECT school_name, principal_name, principal_title, school_year FROM configurations LIMIT 1');
+        const config = configRes.rows[0] || {
+            school_name: 'School',
+            principal_name: 'Principal Name',
+            principal_title: 'Principal',
+            school_year: '2026-2027'
+        };
         // Students
         const studentsQuery = `
             SELECT 

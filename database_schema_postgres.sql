@@ -43,7 +43,10 @@ CREATE TABLE IF NOT EXISTS configurations (
     logo_directory TEXT,
     organization_hotline TEXT,
     country_code TEXT NOT NULL,
-    created_config_date TEXT -- Consider changing to TIMESTAMP or DATE if this is not just a label
+    created_config_date TEXT, -- Consider changing to TIMESTAMP or DATE if this is not just a label
+    principal_name TEXT,
+    principal_title TEXT DEFAULT 'School Principal',
+    school_year TEXT DEFAULT '2026-2027'
 );
 
 -- 4. Staff Accounts (Created before others to satisfy FK constraints)

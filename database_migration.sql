@@ -147,5 +147,11 @@ CREATE TABLE IF NOT EXISTS event_notes (
 ALTER TABLE sections DROP CONSTRAINT IF EXISTS sections_adviser_staff_id_fkey;
 ALTER TABLE sections ADD CONSTRAINT sections_adviser_staff_id_fkey FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL;
 
+-- 16. Update configurations for ID Cards
+ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_name TEXT;
+ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_title TEXT DEFAULT 'School Principal';
+ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '2024-2025';
+
+
 
 COMMIT;

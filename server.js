@@ -304,6 +304,12 @@ async function checkAndInitDB() {
                 WHERE table_name = 'event_notes'
             `);
 
+            const checkConfigPrincipal = await pool.query(`
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'configurations' AND column_name = 'principal_name'
+            `);
+
 
             // We start nl this arg lmao, i dont like vscrolling this thing
             if (checkColumn.rows.length === 0 || 
@@ -316,7 +322,8 @@ async function checkAndInitDB() {
                 checkEventAttendanceTable.rows.length === 0 ||
                 checkEventHashCol.rows.length === 0 ||
                 checkEventNotesTable.rows.length === 0 ||
-                checkEventHashCol.rows.length === 0) {
+                checkEventHashCol.rows.length === 0 ||
+                checkConfigPrincipal.rows.length === 0 ) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -2036,7 +2043,7 @@ app.get('/api/id-cards/list', async (req, res) => {
             });
         });
 
-        res.json(users);
+        res.json({ users, config });
     } catch (err) {
         debugLogWriteToFile(`[ID CARDS] LIST ERROR: ${err.message}`);
         res.status(500).json({ error: err.message });

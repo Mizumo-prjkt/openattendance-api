@@ -946,7 +946,13 @@ app.post('/api/setup/validate-admin', (req, res) => {
             error: 'Username and password are not provided'
         });
     }
-    const query = 'SELECT * FROM staff_login WHERE username = $1';
+    // const query = 'SELECT * FROM staff_login WHERE username = $1';
+    const query = `
+        SELECT sl.*, sa.name, sa.staff_type
+        FROM staff_login sl
+        LEFT JOIN staff_accounts sa ON sl.staff_id = sa.staff_id
+        WHERE sl.username = $1
+    `;
     pool.query(query, [username], (err, result) => {
         if (err) {
             debugLogWriteToFile(`[VA-ADMIN] CRITICAL: DB Error on admin validation: ${err.message} `);
@@ -976,7 +982,9 @@ app.post('/api/setup/validate-admin', (req, res) => {
                 res.json({
                     success: true,
                     message: 'Admin credentials are valid',
-                    staff_id: admin.staff_id                
+                    staff_id: admin.staff_id,
+                    name: admin.name,
+                    role: admin.staff_type             
                 })
             } else {
                 debugLogWriteToFile(`[VA-ADMIN]: Admin credentials during verification did not match at all... Are you sure you inputted the correct letters?`)

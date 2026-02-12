@@ -2176,3 +2176,34 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
     }
 });
 
+// [DATABASE]
+// Backup Database
+app.get('/api/database/backup', (req, res) => {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `backup_openattendance_${timestamp}.sql`;
+    const filePath = path.join(backupsDir, filename);
+
+    const dbUser = process.env.DB_USER || 'postgres';
+    const dbHost = process.env.DB_HOST || 'localhost';
+    const dbName = process.env.DB_NAME || 'openattendance';
+    const dbPassword = process.env.DB_PASSWORD || 'password';
+    const dbPort = process.env.DB_PORT || 5432;
+
+    // Use PGPASSWORD env var to avoid password prompt
+    const env = { ...process.env, PGPASSWORD: dbPassword };
+    const command = `pg_dump -U ${dbUser} -h ${dbHost} -p ${dbPort} -F p ${dbName} > "${filePath}"`;
+
+    debugLogWriteToFile(`[DATABASE] Starting backup to ${filePath}`);
+
+    exec(command, { env }, (error, stdout, stderr) => {
+        if (error) {
+            debugLogWriteToFile(`[DATABASE] Backup Error: ${error.message}`);
+            return res.status(500).json({ error: 'Backup generation failed', details: error.message });
+        }
+
+        res.download(filePath, filename, (err) => {
+            if (err) debugLogWriteToFile(`[DATABASE] Download Error: ${err.message}`);
+            else debugLogWriteToFile(`[DATABASE] Backup downloaded successfully`);
+        });
+    });
+});

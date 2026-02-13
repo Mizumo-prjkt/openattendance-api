@@ -157,5 +157,8 @@ ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '20
 -- 17. Maintenance Mode
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE;
 
+-- 18. Attendance Present and event checks
+ALTEER TABLE present ADD COLUMN IF NOT EXISTS location TEXT
+ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT
 
 COMMIT;

@@ -443,6 +443,11 @@ async function checkAndInitDB() {
                 // await hotfixClient.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_title TEXT DEFAULT 'School Principal';`);
                 // await hotfixClient.query(`ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '2024-2025';`);
 
+                // 8. Ensure 'location' column exists in 'present' and 'event_attendance' tables
+                await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS location TEXT");
+                await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT");
+
+
 
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');

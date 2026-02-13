@@ -27,7 +27,6 @@ const crypto = require('crypto');
 const { exec } = require('child_process');
 const e = require('express');
 const { DESTRUCTION } = require('dns');
-const NTP = require('ntp-time');
 const os = require('os');
 const checkDiskSpace = require('check-disk-space').default;
 const http = require('http');

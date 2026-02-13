@@ -560,6 +560,12 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out TIMESTAMP");
                 await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out TIMESTAMP");
 
+                // 11. Ensure attendance configuration columns exist
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_in_start TIME DEFAULT '06:00:00'");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_late_threshold TIME DEFAULT '08:00:00'");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_out_target TIME DEFAULT '16:00:00'");
+
+
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
             } catch (err) {
@@ -1291,8 +1297,11 @@ app.get('/api/dashboard/overview', async (req, res) => {
         const absentTodayRes = await client.query("SELECT COUNT(*) FROM absent WHERE absent_datetime::date = CURRENT_DATE");
         const absentToday = parseInt(absentTodayRes.rows[0].count || 0);
 
-        // Late: Assuming late is after 8:00 AM (Hardcoded for now, should be config)
-        const lateTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE AND time_in::time > '08:00:00'");
+        // Get Late Treshold!
+        const configRes = await client.query("SELECT time_late_treshold FROM configurations LIMIT 1");
+        const lateThreshold = configRes.rows[0]?.time_late_treshold || '08:00:00';
+
+        const lateTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE AND time_in::time > $1", [lateThreshold]);
         const lateToday = parseInt(lateTodayRes.rows[0].count || 0);
 
         // 2. Chart Data (Last 7 days)
@@ -1524,7 +1533,11 @@ app.get('/api/students/stats/:student_id', async (req, res) => {
     try {
         const presentRes = await client.query('SELECT COUNT(*) FROM present WHERE student_id = $1', [student_id]);
         const absentRes = await client.query('SELECT COUNT(*) FROM absent WHERE student_id = $1', [student_id]);
-        const lateRes = await client.query("SELECT COUNT(*) FROM present WHERE student_id = $1 AND time_in::time > '08:00:00'", [student_id]);
+
+        const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
+        const lateThreshold = configRes.rows[0]?.time_late_treshold || '08:00:00';
+        const lateRes = await client.query("SELECT COUNT(*) FROM present WHERE student_id = $1 AND time_in::time > $2", [student_id, lateThreshold]);
+
 
         const present = parseInt(presentRes.rows[0].count || 0);
         const absent = parseInt(absentRes.rows[0].count || 0);
@@ -2056,20 +2069,23 @@ app.get('/api/reports/daily', async (req, res) => {
         const end = end_date || new Date().toISOString().split('T')[0];
         const start = start_date || new Date(Date.now() - 30 * 24 *60 * 1000).toISOString().split('T')[0];
 
+        const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
+        const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
+
         const query = `
             SELECT
                 to_char(d, 'YYYY-MM-DD') as date,
                 (SELECT COUNT(*) FROM students WHERE status = 'Active') as total,
                 COALESCE(COUNT(DISTINCT p.student_id), 0)::int as present,
                 (SELECT COUNT(*) FROM absent a WHERE a.absent_datetime::date = d::date)::int as absent,
-                COALESCE(COUNT(DISTINCT CASE WHEN p.time_in::time > '08:00:00' THEN p.student_id END), 0)::int as late
+                COALESCE(COUNT(DISTINCT CASE WHEN p.time_in::time > $3 THEN p.student_id END), 0)::int as late
             FROM generate_series($1::date, $2::date, '1 day') d
             LEFT JOIN present p ON p.time_in::date = d::date
             GROUP BY d
             ORDER BY d DESC
         `;
 
-        const result = await client.query(query, [start, end]);
+        const result = await client.query(query, [start, end, lateThreshold]);
         res.json(result.rows);
     } catch (err) {
         debugLogWriteToFile(`[REPORTS]: Daily Report Error: ${err.message}`)
@@ -2306,7 +2322,7 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server } = req.body;
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target } = req.body;
     
     const client = await pool.connect();
     try {
@@ -2317,24 +2333,29 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
              // Insert (Only if table is empty)
              const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
              await client.query(
-                 `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode)
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org']
+                 `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00']
              );
         } else {
             // Update existing row
             const id = check.rows[0].config_id;
             let query = `
                 UPDATE configurations 
-                SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year), ntp_server = COALESCE($8, ntp_server)
+                SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year), ntp_server = COALESCE($8, ntp_server),
+                time_in_start = COALESCE($9, time_in_start), time_late_threshold = COALESCE($10, time_late_threshold), time_out_target = COALESCE($11, time_out_target)
             `;
-            const params = [school_name || null, school_id || null, country_code || null, address || null, principal_name || null, principal_title || null, school_year || null, ntp_server || null];
+            const params = [
+                school_name || null, school_id || null, country_code || null, address || null, 
+                principal_name || null, principal_title || null, school_year || null, ntp_server || null,
+                time_in_start || null, time_late_threshold || null, time_out_target || null
+            ];
             
             if (req.file) {
-                query += `, logo_directory = $9, maintenance_mode = COALESCE($10, maintenance_mode) WHERE config_id = $11`;
+                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode) WHERE config_id = $14`;
                 params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id );
             } else {
-                query += `, maintenance_mode = COALESCE($9, maintenance_mode) WHERE config_id = $10`;
+                query += `, maintenance_mode = COALESCE($12, maintenance_mode) WHERE config_id = $13`;
                 params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id);
             }
             await client.query(query, params);

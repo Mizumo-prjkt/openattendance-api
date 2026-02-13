@@ -571,6 +571,10 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_late_threshold TIME DEFAULT '08:00:00'");
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_out_target TIME DEFAULT '16:00:00'");
 
+                // 12. Security Recovery Migration
+                await hotfixClient.query("ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_question TEXT");
+                await hotfixClient.query("ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_answer TEXT");
+                await hotfixClient.query("ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS recovery_code TEXT");
 
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
@@ -3006,3 +3010,44 @@ app.get('/api/system/time', (req, res) => {
         offset: globalTimeOffset
     });
 });
+
+// [SECURITY-SETUP]
+// Update Security Questions
+app.put('/api/staff/security-setup', async (req, res) => {
+    const { staff_id, question, answer } = req.body;
+    if (!staff_id || !question || !answer) return res.status(400).json({ error: 'Missing parameters' });
+
+    const client = await pool.connect();
+    try {
+        const hashedAnswer = await bcrypt.hash(answer, 10);
+        await client.query('UPDATE staff_login SET security_question = $1, security_answer = $2 WHERE staff_id = $3', [question, hashedAnswer, staff_id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[SECURITY] SETUP ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Generate Recovery Code
+app.post('/api/staff/recovery-code', async (req, res) => {
+    const { staff_id } = req.body;
+    if (!staff_id) return res.status(400).json({ error: 'Staff ID required' });
+
+    const client = await pool.connect();
+    try {
+        // Generate 12-char code (XXXX-XXXX-XXXX)
+        const code = crypto.randomBytes(6).toString('hex').toUpperCase().match(/.{1,4}/g).join('-');
+        const hashedCode = await bcrypt.hash(code, 10);
+        
+        await client.query('UPDATE staff_login SET recovery_code = $1 WHERE staff_id = $2', [hashedCode, staff_id]);
+        res.json({ success: true, code });
+    } catch (err) {
+        debugLogWriteToFile(`[SECURITY] RECOVERY CODE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+

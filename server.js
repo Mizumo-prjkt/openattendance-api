@@ -35,6 +35,7 @@ const { Server } = require('socket.io');
 const multer = require('multer'); // Added missing requirement based on code usage
 const QRCode = require('qrcode');
 const archiver = require('archiver');
+const NTP = require('ntp-time');
 
 // Initial
 let debugMode = false;
@@ -47,6 +48,7 @@ app.use(bodyParser.urlencoded({
     extended: true,
     limit: '50mb'
 }));
+
 
 // Initialize Socket.io
 const server = http.createServer(app);
@@ -184,6 +186,32 @@ io.on('connection', (socket) => {
         debugLogWriteToFile(`[SOCKET]: Empty Trigger in dev mode...`);
     });
 });
+
+// Then, we grab time from NTP server!
+const ntpClient = new NTP.Client('pool.ntp.org', 123, { timeout: 3000 });
+// We set the time difference between Server NTP time and Local Time.
+let globalTimeOffset = process.env.NTP_OFFSET || 0; // We in ms btw
+// Then we async the time
+async function syncTimeWithNTP() {
+    try {
+        const time = await ntpClient.syncTime();
+        // Calculate offset: NTP and Local Time
+        const now = new Date();
+        globalTimeOffset = time.time.getTime() - now.getTime();
+
+        console.log(`[NTP]: Time Syncronization Complete!`);
+        console.log(`[NTP] SERVER TIME: ${now.toLocaleTimeString()}`);
+        console.log(`[NTP] Real Time: ${time.time.toLocaleTimeString()}`);
+        console.log(`[NTP] Offset:      ${globalTimeOffset}ms`);
+
+        debugLogWriteToFile(`[NTP]: Server Time syncronization complete!`);
+        debugLogWriteToFile(`[NTP]: Offset Applied: ${globalTimeOffset}ms`);
+
+    } catch (err) {
+        console.warn(`[NTP]: Syncronization Failed: ${err.message}. Using System Time Instead`);
+        debugLogWriteToFile(`[NTP]: Timesync fail: ${err.message}`);
+    }
+}
 
 // Start the server!
 server.listen(PORT, () => {
@@ -2728,3 +2756,10 @@ app.post('/api/attendance/scan', async (req, res) => {
         client.release();
     }
 });
+
+
+// [NTPSYNC]
+// NTP Timesync
+app.post('/api/ntp/syncnow', async (req, res) => {
+    syncTimeWithNTP();
+})

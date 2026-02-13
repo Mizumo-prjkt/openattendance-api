@@ -1607,6 +1607,35 @@ app.get('/api/sections/list', async (req, res) => {
     }
 });
 
+// Get Section Stats (Heatmap Data)
+app.get('/api/sections/stats/:section_id', async (req, res) => {
+    const { section_id } = req.params;
+    const client = await pool.connect();
+    try {
+        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
+        const sectionName = secRes.rows[0].section_name;
+
+        const query = `
+            SELECT 
+                to_char(p.time_in, 'YYYY-MM-DD') as date,
+                COUNT(DISTINCT p.student_id)::int as count
+            FROM present p
+            JOIN students s ON p.student_id = s.student_id
+            WHERE s.classroom_section = $1
+            AND p.time_in > CURRENT_DATE - INTERVAL '1 year'
+            GROUP BY to_char(p.time_in, 'YYYY-MM-DD')
+        `;
+        const result = await client.query(query, [sectionName]);
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] STATS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 // Add/Update/Delete Section
 app.post('/api/sections/add', async (req, res) => {
     const { name, adviser_id, room, grade_level, strand, schedule } = req.body;

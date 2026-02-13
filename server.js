@@ -556,6 +556,10 @@ async function checkAndInitDB() {
                 // 9. We ensure that 'ntp_server' column exists in 'configurations'
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS ntp_server TEXT DEFAULT 'pool.ntp.org'");
 
+                // 10. Ensure 'time_out' column exists in 'present' and 'event_attendance' tables
+                await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out TIMESTAMP");
+
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
             } catch (err) {
@@ -2788,8 +2792,10 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
 // [ATTENDANCE-SCAN]
 // Kiosk Scan Endpoint
 app.post('/api/attendance/scan', async (req, res) => {
-    const { qr_code, mode, event_id, location, staff_id } = req.body;
+    const { qr_code, mode, event_id, location, staff_id, type } = req.body;
     const client = await pool.connect();
+    const scanType = type || 'in'; // Default to 'in' if not specified
+
     try {
         // 1. Identify Student
         // Assuming QR code contains the student_id directly for now
@@ -2804,27 +2810,47 @@ app.post('/api/attendance/scan', async (req, res) => {
             if (!event_id) return res.status(400).json({ error: 'Event ID required for event mode' });
             
             // Check if already scanned for this event
-            const check = await client.query("SELECT id FROM event_attendance WHERE event_id = $1 AND student_id = $2", [event_id, student.student_id]);
-            if (check.rows.length > 0) {
-                return res.status(409).json({ error: 'Already scanned for this event', student });
+            // We get the latest record to determine state
+            const check = await client.query("SELECT id, time_out FROM event_attendance WHERE event_id = $1 AND student_id = $2 ORDER BY time_in DESC LIMIT 1", [event_id, student.student_id]);
+            
+            if (scanType === 'in') {
+                // If latest record exists and has NO time_out, they are currently checked in.
+                if (check.rows.length > 0 && !check.rows[0].time_out) {
+                    return res.status(409).json({ error: 'Already checked in for this event', student });
+                }
+                // Otherwise (no record OR previous record has time_out), allow new entry
+                await client.query(
+                    "INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, NOW())",
+                    [event_id, student.student_id, location || 'Kiosk']
+                );
+            } else {
+                // Time Out
+                if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
+                if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
+                
+                await client.query("UPDATE event_attendance SET time_out = NOW() WHERE id = $1", [check.rows[0].id]);
             }
-
-            await client.query(
-                "INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, NOW())",
-                [event_id, student.student_id, location || 'Kiosk']
-            );
         } else {
             // Normal Mode (Daily Attendance)
-            // Check if already present today
-            const check = await client.query("SELECT present_id FROM present WHERE student_id = $1 AND time_in::date = CURRENT_DATE", [student.student_id]);
-            if (check.rows.length > 0) {
-                 return res.status(409).json({ error: 'Already checked in today', student });
+            const check = await client.query("SELECT present_id, time_out FROM present WHERE student_id = $1 AND time_in::date = CURRENT_DATE ORDER BY time_in DESC LIMIT 1", [student.student_id]);
+            
+            if (scanType === 'in') {
+                if (check.rows.length > 0) {
+                     // For daily attendance, we typically enforce one record per day, or at least warn.
+                     // If they are already checked in (time_out is null), error.
+                     // If they checked out (time_out is set), we could allow re-entry, but for now let's say "Already present today".
+                     return res.status(409).json({ error: 'Already checked in today', student });
+                }
+                await client.query(
+                    "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, NOW(), $2, $3)",
+                    [student.student_id, staff_id || null, location || 'Kiosk']
+                );
+            } else {
+                if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
+                if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
+                
+                await client.query("UPDATE present SET time_out = NOW() WHERE present_id = $1", [check.rows[0].present_id]);
             }
-
-            await client.query(
-                "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, NOW(), $2, $3)",
-                [student.student_id, staff_id || null, location || 'Kiosk']
-            );
         }
 
         res.json({ success: true, student });

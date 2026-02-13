@@ -1298,8 +1298,8 @@ app.get('/api/dashboard/overview', async (req, res) => {
         const absentToday = parseInt(absentTodayRes.rows[0].count || 0);
 
         // Get Late Treshold!
-        const configRes = await client.query("SELECT time_late_treshold FROM configurations LIMIT 1");
-        const lateThreshold = configRes.rows[0]?.time_late_treshold || '08:00:00';
+        const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
+        const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
 
         const lateTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE AND time_in::time > $1", [lateThreshold]);
         const lateToday = parseInt(lateTodayRes.rows[0].count || 0);
@@ -1535,7 +1535,7 @@ app.get('/api/students/stats/:student_id', async (req, res) => {
         const absentRes = await client.query('SELECT COUNT(*) FROM absent WHERE student_id = $1', [student_id]);
 
         const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
-        const lateThreshold = configRes.rows[0]?.time_late_treshold || '08:00:00';
+        const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
         const lateRes = await client.query("SELECT COUNT(*) FROM present WHERE student_id = $1 AND time_in::time > $2", [student_id, lateThreshold]);
 
 

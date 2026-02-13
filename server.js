@@ -3106,6 +3106,53 @@ app.post('/api/auth/recovery/lookup', async (req, res) => {
     }
 });
 
+// Verify Recovery Code
+app.post('/api/auth/recovery/verify-code', async (req, res) => {
+    const { staff_id, code } = req.body;
+    const client = await pool.connect();
+    try {
+        const res1 = await client.query('SELECT recovery_code FROM staff_login WHERE staff_id = $1', [staff_id]);
+        if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+        
+        const storedHash = res1.rows[0].recovery_code;
+        if (!storedHash) return res.status(400).json({ error: 'No recovery code set.' });
+
+        const match = await bcrypt.compare(code, storedHash);
+        if (!match) return res.status(401).json({ error: 'Invalid recovery code.' });
+        
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[RECOVERY] VERIFY CODE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Verify Security Question
+app.post('/api/auth/recovery/verify-question', async (req, res) => {
+    const { staff_id, answer } = req.body;
+    const client = await pool.connect();
+    try {
+        const res1 = await client.query('SELECT security_answer FROM staff_login WHERE staff_id = $1', [staff_id]);
+        if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+        
+        const storedHash = res1.rows[0].security_answer;
+        if (!storedHash) return res.status(400).json({ error: 'No security question set.' });
+
+        const match = await bcrypt.compare(answer, storedHash);
+        if (!match) return res.status(401).json({ error: 'Incorrect answer.' });
+
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[RECOVERY] VERIFY QUESTION ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+
 // Reset via Recovery Code
 app.post('/api/auth/recovery/reset-via-code', async (req, res) => {
     const { staff_id, code, new_password } = req.body;

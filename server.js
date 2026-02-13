@@ -35,6 +35,12 @@ const multer = require('multer'); // Added missing requirement based on code usa
 const QRCode = require('qrcode');
 const archiver = require('archiver');
 const NTP = require('ntp-time');
+let ZteModem;
+try {
+    ZteModem = require('@zigasebenik/zte-sms');
+} catch (e) {
+    console.log("[SMS] Optional dependency @zigasebenik/zte-sms not found.");
+}
 
 // Initial
 let debugMode = false;
@@ -2237,6 +2243,11 @@ app.get('/api/sms/settings', async (req, res) => {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+        
+        // Hotfix: Add columns for ZTE/Modem IP if they don't exist
+        await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_ip TEXT`);
+        await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_password TEXT`);
+
         const result = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
         res.json(result.rows[0] || {});
     } catch (err) {
@@ -2250,13 +2261,13 @@ app.get('/api/sms/settings', async (req, res) => {
 
 // Save SMS Settings
 app.post('/api/sms/settings', async (req, res) => {
-    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json } = req.body;
+    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password } = req.body;
     const client = await pool.connect();
     try {
         await client.query(`
-            INSERT INTO sms_provider_settings (provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json]);
+            INSERT INTO sms_provider_settings (provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SMS] SAVE SETTINGS ERROR: ${err.message}`);
@@ -2297,10 +2308,25 @@ app.post('/api/sms/send', async (req, res) => {
     const { recipient_number, message_body } = req.body;
     const client = await pool.connect();
     try {
-        // Mock send for now - in production this would call the API or Serial Port
+        // Fetch settings to determine how to send
+        const settingsRes = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
+        const settings = settingsRes.rows[0];
+
+        if (settings && settings.sms_enabled) {
+            if (settings.provider_type === 'zte') {
+                if (!ZteModem) throw new Error("ZTE-SMS library is not installed on the server.");
+                const myModem = new ZteModem({ 
+                    modemIP: settings.modem_ip || '192.168.0.1', 
+                    modemPassword: settings.modem_password 
+                });
+                await myModem.sendSms(recipient_number, message_body);
+            }
+        }
+
         await client.query("INSERT INTO sms_logs (recipient_number, message_body, status) VALUES ($1, $2, 'sent')", [recipient_number, message_body]);
         res.json({ success: true });
     } catch (err) {
+        await client.query("INSERT INTO sms_logs (recipient_number, message_body, status, error_message) VALUES ($1, $2, 'failed', $3)", [recipient_number, message_body, err.message]);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();

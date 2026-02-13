@@ -3051,3 +3051,110 @@ app.post('/api/staff/recovery-code', async (req, res) => {
     }
 });
 
+// [RECOVERY]
+// Lookup Account for Recovery
+app.post('/api/auth/recovery/lookup', async (req, res) => {
+    const { identifier } = req.body;
+    if (!identifier) return res.status(400).json({ error: 'Identifier required' });
+
+    const client = await pool.connect();
+    try {
+        let staffId = null;
+        
+        // 1. Check Username (staff_login)
+        const resUser = await client.query('SELECT staff_id FROM staff_login WHERE username = $1', [identifier]);
+        if (resUser.rows.length > 0) staffId = resUser.rows[0].staff_id;
+
+        // 2. Check Staff ID (staff_accounts)
+        if (!staffId) {
+            const resId = await client.query('SELECT staff_id FROM staff_accounts WHERE staff_id = $1', [identifier]);
+            if (resId.rows.length > 0) staffId = resId.rows[0].staff_id;
+        }
+
+        // 3. Check Email (staff_accounts)
+        if (!staffId) {
+            const resEmail = await client.query('SELECT staff_id FROM staff_accounts WHERE email_address = $1', [identifier]);
+            if (resEmail.rows.length > 0) staffId = resEmail.rows[0].staff_id;
+        }
+
+        if (!staffId) return res.status(404).json({ error: 'Account not found' });
+
+        // Get Recovery Info
+        const loginRes = await client.query('SELECT security_question, recovery_code FROM staff_login WHERE staff_id = $1', [staffId]);
+        
+        if (loginRes.rows.length === 0) {
+             return res.status(404).json({ error: 'Login account not configured.' });
+        }
+
+        const row = loginRes.rows[0];
+        const methods = [];
+        if (row.security_question) methods.push('question');
+        if (row.recovery_code) methods.push('code');
+
+        res.json({
+            found: true,
+            staff_id: staffId,
+            methods,
+            question: row.security_question
+        });
+
+    } catch (err) {
+        debugLogWriteToFile(`[RECOVERY] LOOKUP ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Reset via Recovery Code
+app.post('/api/auth/recovery/reset-via-code', async (req, res) => {
+    const { staff_id, code, new_password } = req.body;
+    const client = await pool.connect();
+    try {
+        const res1 = await client.query('SELECT recovery_code FROM staff_login WHERE staff_id = $1', [staff_id]);
+        if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+        
+        const storedHash = res1.rows[0].recovery_code;
+        if (!storedHash) return res.status(400).json({ error: 'No recovery code set.' });
+
+        const match = await bcrypt.compare(code, storedHash);
+        if (!match) return res.status(401).json({ error: 'Invalid recovery code.' });
+
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+        // Invalidate code after use
+        await client.query('UPDATE staff_login SET password = $1, recovery_code = NULL WHERE staff_id = $2', [hashedPassword, staff_id]);
+        
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[RECOVERY] RESET CODE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Reset via Security Question
+app.post('/api/auth/recovery/reset-via-question', async (req, res) => {
+    const { staff_id, answer, new_password } = req.body;
+    const client = await pool.connect();
+    try {
+        const res1 = await client.query('SELECT security_answer FROM staff_login WHERE staff_id = $1', [staff_id]);
+        if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+        
+        const storedHash = res1.rows[0].security_answer;
+        if (!storedHash) return res.status(400).json({ error: 'No security question set.' });
+
+        const match = await bcrypt.compare(answer, storedHash);
+        if (!match) return res.status(401).json({ error: 'Incorrect answer.' });
+
+        const hashedPassword = await bcrypt.hash(new_password, 10);
+        await client.query('UPDATE staff_login SET password = $1 WHERE staff_id = $2', [hashedPassword, staff_id]);
+
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[RECOVERY] RESET QUESTION ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

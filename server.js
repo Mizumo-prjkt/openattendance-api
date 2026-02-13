@@ -188,12 +188,24 @@ io.on('connection', (socket) => {
 });
 
 // Then, we grab time from NTP server!
-const ntpClient = new NTP.Client('pool.ntp.org', 123, { timeout: 3000 });
+// M: on second thought, we should let client do the configure
+// const ntpClient = new NTP.Client('pool.ntp.org', 123, { timeout: 3000 });
 // We set the time difference between Server NTP time and Local Time.
 let globalTimeOffset = process.env.NTP_OFFSET || 0; // We in ms btw
 // Then we async the time
 async function syncTimeWithNTP() {
     try {
+        // Fetch configured NTP server
+        const client = await pool.connect();
+        let ntpAddress = 'pool.ntp.org';
+        try {
+            const res = await client.query('SELECT ntp_server FROM configurations LIMIT 1');
+            if (res.rows.length > 0 && res.rows[0].ntp_server) ntpAddress = res.rows[0].ntp_server;
+        } finally {
+            client.release();
+        }
+
+        const ntpClient = new NTP.Client(ntpAddress, 123, { timeout: 3000 });
         const time = await ntpClient.syncTime();
         // Calculate offset: NTP and Local Time
         const now = new Date();
@@ -201,10 +213,10 @@ async function syncTimeWithNTP() {
 
         console.log(`[NTP]: Time Syncronization Complete!`);
         console.log(`[NTP] SERVER TIME: ${now.toLocaleTimeString()}`);
-        console.log(`[NTP] Real Time: ${time.time.toLocaleTimeString()}`);
+        console.log(`[NTP] Real Time: ${time.time.toLocaleTimeString()} (via ${ntpAddress})`);
         console.log(`[NTP] Offset:      ${globalTimeOffset}ms`);
 
-        debugLogWriteToFile(`[NTP]: Server Time syncronization complete!`);
+        debugLogWriteToFile(`[NTP]: Server Time syncronization complete using ${ntpAddress}`);
         debugLogWriteToFile(`[NTP]: Offset Applied: ${globalTimeOffset}ms`);
 
     } catch (err) {
@@ -475,7 +487,8 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS location TEXT");
                 await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT");
 
-
+                // 9. We ensure that 'ntp_server' column exists in 'configurations'
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS ntp_server TEXT DEFAULT 'pool.ntp.org'");
 
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
@@ -2223,7 +2236,7 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode } = req.body;
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server } = req.body;
     
     const client = await pool.connect();
     try {
@@ -2236,22 +2249,22 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
              await client.query(
                  `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode)
                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true']
+                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org']
              );
         } else {
             // Update existing row
             const id = check.rows[0].config_id;
             let query = `
                 UPDATE configurations 
-                SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year)
+                SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year), ntp_server = COALESCE($8, ntp_server)
             `;
-            const params = [school_name || null, school_id || null, country_code || null, address || null, principal_name || null, principal_title || null, school_year || null];
+            const params = [school_name || null, school_id || null, country_code || null, address || null, principal_name || null, principal_title || null, school_year || null, ntp_server || null];
             
             if (req.file) {
-                query += `, logo_directory = $8, maintenance_mode = COALESCE($9, maintenance_mode) WHERE config_id = $10`;
-                params.push(`/assets/images/logos/${req.file.filename}`, id, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id );
+                query += `, logo_directory = $9, maintenance_mode = COALESCE($10, maintenance_mode) WHERE config_id = $11`;
+                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id );
             } else {
-                query += `, maintenance_mode = COALESCE($8, maintenance_mode) WHERE config_id = $9`;
+                query += `, maintenance_mode = COALESCE($9, maintenance_mode) WHERE config_id = $10`;
                 params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id);
             }
             await client.query(query, params);
@@ -2761,5 +2774,9 @@ app.post('/api/attendance/scan', async (req, res) => {
 // [NTPSYNC]
 // NTP Timesync
 app.post('/api/ntp/syncnow', async (req, res) => {
-    syncTimeWithNTP();
+    await syncTimeWithNTP();
+    res.json({
+        success: true,
+        message: 'Time sync triggered.'
+    })
 })

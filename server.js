@@ -2222,11 +2222,86 @@ app.get('/api/export/generate', async (req, res) => {
 app.get('/api/sms/settings', async (req, res) => {
     const client = await pool.connect();
     try {
+        // Ensure table exists
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS sms_provider_settings (
+                id SERIAL PRIMARY KEY,
+                provider_type TEXT DEFAULT 'api',
+                sms_enabled BOOLEAN DEFAULT false,
+                api_url TEXT,
+                api_key TEXT,
+                tty_path TEXT,
+                baud_rate INTEGER,
+                message_template TEXT,
+                curl_config_json TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
         const result = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
         res.json(result.rows[0] || {});
     } catch (err) {
         debugLogWriteToFile(`[SMS] GET SETTINGS ERROR: ${err.message}`);
         console.log(`[SMS] SMS Configuration Fetch Failed: ${err.message}`)
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Save SMS Settings
+app.post('/api/sms/settings', async (req, res) => {
+    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query(`
+            INSERT INTO sms_provider_settings (provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[SMS] SAVE SETTINGS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Get SMS Logs
+app.get('/api/sms/logs', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS sms_logs (
+                sms_id SERIAL PRIMARY KEY,
+                recipient_number TEXT,
+                recipient_name TEXT,
+                related_student_id TEXT,
+                message_body TEXT,
+                status TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                error_message TEXT
+            )
+        `);
+        const result = await client.query('SELECT * FROM sms_logs ORDER BY sent_at DESC LIMIT 100');
+        res.json(result.rows);
+    } catch (err) {
+        debugLogWriteToFile(`[SMS] GET LOGS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Send SMS (Test)
+app.post('/api/sms/send', async (req, res) => {
+    const { recipient_number, message_body } = req.body;
+    const client = await pool.connect();
+    try {
+        // Mock send for now - in production this would call the API or Serial Port
+        await client.query("INSERT INTO sms_logs (recipient_number, message_body, status) VALUES ($1, $2, 'sent')", [recipient_number, message_body]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     } finally {
         client.release();
     }

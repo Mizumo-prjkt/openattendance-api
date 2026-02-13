@@ -186,6 +186,39 @@ io.on('connection', (socket) => {
     });
 });
 
+// [TIMEZONE-CONFIG]
+// Mapping Country Codes to Timezones for fallback validation
+const CountryTimezones = {
+    'PH': 'Asia/Manila',
+    'US': 'America/New_York',
+    'JP': 'Asia/Tokyo',
+    'SG': 'Asia/Singapore',
+    'AU': 'Australia/Sydney',
+    'GB': 'Europe/London',
+    'CN': 'Asia/Shanghai',
+    'KR': 'Asia/Seoul',
+    'IN': 'Asia/Kolkata',
+    'CA': 'America/Toronto',
+    'AE': 'Asia/Dubai',
+    'SA': 'Asia/Riyadh',
+    'QA': 'Asia/Riyadh',
+    'FR': 'Europe/Paris',
+    'DE': 'Europe/Berlin',
+    'RU': 'Europe/Moscow',
+    'BR': 'America/Sao_Paulo',
+    'MX': 'America/Mexico_City',
+    'ZA': 'Africa/Johannesburg',
+    'NG': 'Africa/Lagos',
+    'EG': 'Africa/Cairo',
+    'TH': 'Asia/Bangkok',
+    'ID': 'Asia/Jakarta',
+    'VN': 'Asia/Ho_Chi_Minh',
+    'MY': 'Asia/Kuala_Lumpur',
+    'NZ': 'Pacific/Auckland',
+    'UTC': 'UTC'
+};
+
+
 // Then, we grab time from NTP server!
 // M: on second thought, we should let client do the configure
 // const ntpClient = new NTP.Client('pool.ntp.org', 123, { timeout: 3000 });
@@ -193,15 +226,23 @@ io.on('connection', (socket) => {
 let globalTimeOffset = process.env.NTP_OFFSET || 0; // We in ms btw
 // Then we async the time
 async function syncTimeWithNTP() {
+    let countryCode = 'UTC';
+    let ntpAddress = 'pool.ntp.org';
     try {
-        // Fetch configured NTP server
-        const client = await pool.connect();
-        let ntpAddress = 'pool.ntp.org';
-        try {
-            const res = await client.query('SELECT ntp_server FROM configurations LIMIT 1');
-            if (res.rows.length > 0 && res.rows[0].ntp_server) ntpAddress = res.rows[0].ntp_server;
-        } finally {
-            client.release();
+        // Fetch configured NTP server and Country Code
+        if (typeof pool !== 'undefined') {
+            const client = await pool.connect();
+            try {
+                const res = await client.query('SELECT ntp_server, country_code FROM configurations LIMIT 1');
+                if (res.rows.length > 0) {
+                    if (res.rows[0].ntp_server) ntpAddress = res.rows[0].ntp_server;
+                    if (res.rows[0].country_code) countryCode = res.rows[0].country_code;
+                }
+            } catch (dbErr) {
+                console.warn(`[NTP]: DB Config fetch failed: ${dbErr.message}`);
+            } finally {
+                client.release();
+            }
         }
 
         const ntpClient = new NTP.Client(ntpAddress, 123, { timeout: 3000 });
@@ -221,6 +262,32 @@ async function syncTimeWithNTP() {
     } catch (err) {
         console.warn(`[NTP]: Syncronization Failed: ${err.message}. Using System Time Instead`);
         debugLogWriteToFile(`[NTP]: Timesync fail: ${err.message}`);
+        // Fallback: Validate Local time against Country Code Timezone
+        validateLocalTimeWithCountry(countryCode);
+    }
+}
+
+function validateLocalTimeWithCountry(countryCode) {
+    try {
+        const targetZone = CountryTimezones[countryCode] || 'UTC';
+        const now = new Date();
+        
+        // Get formatted time strings to compare hours (simple validation)
+        const options = { timeZone: targetZone, hour: 'numeric', hour12: false };
+        const targetHour = new Intl.DateTimeFormat('en-US', options).format(now);
+        
+        const localOptions = { hour: 'numeric', hour12: false };
+        const localHour = new Intl.DateTimeFormat('en-US', localOptions).format(now);
+
+        if (targetHour !== localHour) {
+            const msg = `[TIME]: WARNING! System time (Hour: ${localHour}) does not match expected time for ${countryCode}/${targetZone} (Hour: ${targetHour}).`;
+            console.warn(msg);
+            debugLogWriteToFile(msg);
+        } else {
+            debugLogWriteToFile(`[TIME]: System time validated against ${countryCode} (${targetZone}).`);
+        }
+    } catch (validationErr) {
+        console.error(`[TIME]: Validation Error: ${validationErr.message}`);
     }
 }
 

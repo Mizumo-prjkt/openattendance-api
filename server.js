@@ -2042,6 +2042,10 @@ app.get('/api/sections/export-tickets/:section_id', async (req, res) => {
         if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
         const sectionName = secRes.rows[0].section_name;
 
+        // 1.5 Get School Year
+        const configRes = await client.query('SELECT school_year FROM configurations LIMIT 1');
+        const schoolYear = configRes.rows[0]?.school_year || '';
+
         // 2. Get Students
         const studentsRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE classroom_section = $1 AND status = 'Active'", [sectionName]);
         const students = studentsRes.rows;
@@ -2054,7 +2058,7 @@ app.get('/api/sections/export-tickets/:section_id', async (req, res) => {
         archive.pipe(res);
 
         for (const student of students) {
-            const qrData = student.student_id;
+            const qrData = schoolYear ? `${student.student_id}|${schoolYear}` : student.student_id;
             const buffer = await QRCode.toBuffer(qrData, { width: 300, margin: 2 });
             const studentName = `${student.first_name}-${student.last_name}`.replace(/\s+/g, '-');
             const imgFilename = `${studentName}.png`;
@@ -2924,9 +2928,13 @@ app.post('/api/attendance/scan', async (req, res) => {
 
     try {
         // 1. Identify Student
-        // Assuming QR code contains the student_id directly for now
-        const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [qr_code]);
+        // QR code might be in format <student-id>|<school year>
+        let studentIdToSearch = qr_code;
+        if (qr_code && qr_code.includes('|')) {
+            studentIdToSearch = qr_code.split('|')[0];
+        }
         
+        const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [studentIdToSearch]);        
         if (studentRes.rows.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }

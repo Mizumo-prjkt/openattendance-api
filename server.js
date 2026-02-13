@@ -2672,3 +2672,54 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
         client.release();
     }
 });
+
+// [ATTENDANCE-SCAN]
+// Kiosk Scan Endpoint
+app.post('/api/attendance/scan', async (req, res) => {
+    const { qr_code, mode, event_id, location, staff_id } = req.body;
+    const client = await pool.connect();
+    try {
+        // 1. Identify Student
+        // Assuming QR code contains the student_id directly for now
+        const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [qr_code]);
+        
+        if (studentRes.rows.length === 0) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+        const student = studentRes.rows[0];
+
+        if (mode === 'event') {
+            if (!event_id) return res.status(400).json({ error: 'Event ID required for event mode' });
+            
+            // Check if already scanned for this event
+            const check = await client.query("SELECT id FROM event_attendance WHERE event_id = $1 AND student_id = $2", [event_id, student.student_id]);
+            if (check.rows.length > 0) {
+                return res.status(409).json({ error: 'Already scanned for this event', student });
+            }
+
+            await client.query(
+                "INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, NOW())",
+                [event_id, student.student_id, location || 'Kiosk']
+            );
+        } else {
+            // Normal Mode (Daily Attendance)
+            // Check if already present today
+            const check = await client.query("SELECT present_id FROM present WHERE student_id = $1 AND time_in::date = CURRENT_DATE", [student.student_id]);
+            if (check.rows.length > 0) {
+                 return res.status(409).json({ error: 'Already checked in today', student });
+            }
+
+            await client.query(
+                "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, NOW(), $2, $3)",
+                [student.student_id, staff_id || null, location || 'Kiosk']
+            );
+        }
+
+        res.json({ success: true, student });
+    } catch (err) {
+        debugLogWriteToFile(`[ATTENDANCE] SCAN ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});

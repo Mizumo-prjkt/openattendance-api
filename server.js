@@ -2846,3 +2846,15 @@ app.post('/api/ntp/syncnow', async (req, res) => {
         message: 'Time sync triggered.'
     })
 })
+
+// [TIME]
+// Get System Time (NTP Corrected)
+app.get('/api/system/time', (req, res) => {
+    const now = Date.now();
+    const ntpTime = now + (globalTimeOffset || 0);
+    res.json({
+        time: new Date(ntpTime).toISOString(),
+        timestamp: ntpTime,
+        offset: globalTimeOffset
+    });
+});

@@ -2021,6 +2021,10 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
         if (eventRes.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
         const event = eventRes.rows[0];
 
+        // 1.5 Get School Year
+        const configRes = await client.query('SELECT school_year FROM configurations LIMIT 1');
+        const schoolYear = configRes.rows[0]?.school_year || '';
+
         // 2. Get Active Students
         const studentsRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE status = 'Active'");
         const students = studentsRes.rows;
@@ -2037,8 +2041,8 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
         for (const student of students) {
             let qrData;
             if (event.secure_mode) {
-                // Secure Format: HASH#STUDENT_ID
-                qrData = `${event.event_hash}#${student.student_id}`;
+                // Secure Format: HASH|STUDENT_ID|SCHOOL_YEAR
+                qrData = `${event.event_hash}|${student.student_id}|${schoolYear}`;
             } else {
                 // Standard: STUDENT_ID
                 qrData = student.student_id;
@@ -2957,10 +2961,15 @@ app.post('/api/attendance/scan', async (req, res) => {
 
     try {
         // 1. Identify Student
-        // QR code might be in format <student-id>|<school year>
+        // QR code might be in format <student-id>|<school year> or <hash>|<student-id>|<school year>
         let studentIdToSearch = qr_code;
         if (qr_code && qr_code.includes('|')) {
-            studentIdToSearch = qr_code.split('|')[0];
+            const parts = qr_code.split('|');
+            if (parts.length >= 3) {
+                studentIdToSearch = parts[1]; // <hash>|<id>|<year>
+            } else {
+                studentIdToSearch = parts[0]; // <id>|<year>
+            }
         }
         
         const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [studentIdToSearch]);        

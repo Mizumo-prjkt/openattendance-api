@@ -230,6 +230,7 @@ const CountryTimezones = {
 // const ntpClient = new NTP.Client('pool.ntp.org', 123, { timeout: 3000 });
 // We set the time difference between Server NTP time and Local Time.
 let globalTimeOffset = process.env.NTP_OFFSET || 0; // We in ms btw
+let timeSource = 'Local System Time';
 // Then we async the time
 async function syncTimeWithNTP() {
     let countryCode = 'UTC';
@@ -257,6 +258,7 @@ async function syncTimeWithNTP() {
         const now = new Date();
         globalTimeOffset = time.time.getTime() - now.getTime();
 
+        timeSource = 'NTP Server';
         console.log(`[NTP]: Time Syncronization Complete!`);
         console.log(`[NTP] SERVER TIME: ${now.toLocaleTimeString()}`);
         console.log(`[NTP] Real Time: ${time.time.toLocaleTimeString()} (via ${ntpAddress})`);
@@ -266,6 +268,7 @@ async function syncTimeWithNTP() {
         debugLogWriteToFile(`[NTP]: Offset Applied: ${globalTimeOffset}ms`);
 
     } catch (err) {
+        timeSource = 'Local System Time (Fallback)';
         console.warn(`[NTP]: Syncronization Failed: ${err.message}. Using System Time Instead`);
         debugLogWriteToFile(`[NTP]: Timesync fail: ${err.message}`);
         // Fallback: Validate Local time against Country Code Timezone
@@ -3053,7 +3056,8 @@ app.get('/api/system/time', (req, res) => {
     res.json({
         time: new Date(ntpTime).toISOString(),
         timestamp: ntpTime,
-        offset: globalTimeOffset
+        offset: globalTimeOffset,
+        source: timeSource
     });
 });
 

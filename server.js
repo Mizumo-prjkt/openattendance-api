@@ -229,12 +229,15 @@ const CountryTimezones = {
 // M: on second thought, we should let client do the configure
 // const ntpClient = new NTP.Client('pool.ntp.org', 123, { timeout: 3000 });
 // We set the time difference between Server NTP time and Local Time.
-let globalTimeOffset = process.env.NTP_OFFSET || 0; // We in ms btw
+let globalTimeOffset = parseInt(process.env.NTP_OFFSET) || 0; // We in ms btw
 let timeSource = 'Local System Time';
 // Then we async the time
-async function syncTimeWithNTP() {
+async function syncTimeWithNTP(retryCount = 0) {
     let countryCode = 'UTC';
     let ntpAddress = 'pool.ntp.org';
+    const maxRetries = 5;
+    const retryCooldown = 5000;
+
     try {
         // Fetch configured NTP server and Country Code
         if (typeof pool !== 'undefined') {
@@ -254,9 +257,14 @@ async function syncTimeWithNTP() {
 
         const ntpClient = new NTP.Client(ntpAddress, 123, { timeout: 3000 });
         const time = await ntpClient.syncTime();
+        
+        if (!time || !time.time) throw new Error("Invalid NTP response");
+
         // Calculate offset: NTP and Local Time
         const now = new Date();
-        globalTimeOffset = time.time.getTime() - now.getTime();
+        const newOffset = time.time.getTime() - now.getTime();
+        if (isNaN(newOffset)) throw new Error("Calculated offset is NaN");
+        globalTimeOffset = newOffset;
 
         timeSource = 'NTP Server';
         console.log(`[NTP]: Time Syncronization Complete!`);
@@ -268,7 +276,14 @@ async function syncTimeWithNTP() {
         debugLogWriteToFile(`[NTP]: Offset Applied: ${globalTimeOffset}ms`);
 
     } catch (err) {
+        if (retryCount < maxRetries) {
+            console.warn(`[NTP]: Sync failed: ${err.message}. Retrying in ${retryCooldown/1000}s... (${retryCount + 1}/${maxRetries})`);
+            setTimeout(() => syncTimeWithNTP(retryCount + 1), retryCooldown);
+            return;
+        }
+
         timeSource = 'Local System Time (Fallback)';
+        if (isNaN(globalTimeOffset)) globalTimeOffset = 0; // Safety reset
         console.warn(`[NTP]: Syncronization Failed: ${err.message}. Using System Time Instead`);
         debugLogWriteToFile(`[NTP]: Timesync fail: ${err.message}`);
         // Fallback: Validate Local time against Country Code Timezone
@@ -3052,11 +3067,20 @@ app.post('/api/ntp/syncnow', async (req, res) => {
 // Get System Time (NTP Corrected)
 app.get('/api/system/time', (req, res) => {
     const now = Date.now();
-    const ntpTime = now + (globalTimeOffset || 0);
+    const safeOffset = (typeof globalTimeOffset === 'number' && !isNaN(globalTimeOffset)) ? globalTimeOffset : 0;
+    const ntpTime = now + safeOffset;
+    
+    let isoTime;
+    try {
+        isoTime = new Date(ntpTime).toISOString();
+    } catch (e) {
+        isoTime = new Date().toISOString();
+    }
+
     res.json({
-        time: new Date(ntpTime).toISOString(),
+        time: isoTime,
         timestamp: ntpTime,
-        offset: globalTimeOffset,
+        offset: safeOffset,
         source: timeSource
     });
 });

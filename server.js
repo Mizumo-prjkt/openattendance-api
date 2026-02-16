@@ -594,6 +594,9 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_answer TEXT");
                 await hotfixClient.query("ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS recovery_code TEXT");
 
+                // 13. Auto-Absent Support (Nullable staff_id)
+                await hotfixClient.query("ALTER TABLE absent ALTER COLUMN staff_id DROP NOT NULL");
+
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
             } catch (err) {
@@ -3084,6 +3087,59 @@ app.get('/api/system/time', (req, res) => {
         source: timeSource
     });
 });
+
+// [AUTO-ABSENT]
+// Check for students who haven't logged in by time_out_target
+async function checkAutoAbsent() {
+    if (typeof pool === 'undefined') return;
+    const client = await pool.connect();
+    try {
+        // 1. Get Config
+        const configRes = await client.query("SELECT time_out_target FROM configurations LIMIT 1");
+        if (configRes.rows.length === 0) return;
+        
+        const timeOutTargetStr = configRes.rows[0].time_out_target || '16:00:00';
+        
+        // 2. Get Current Time (NTP Corrected)
+        const nowMs = Date.now() + (globalTimeOffset || 0);
+        const now = new Date(nowMs);
+        
+        // 3. Parse Target Time
+        const [targetHour, targetMinute] = timeOutTargetStr.split(':').map(Number);
+        const targetTime = new Date(now);
+        targetTime.setHours(targetHour, targetMinute, 0, 0);
+        
+        // 4. Compare & Execute
+        if (now >= targetTime) {
+             const query = `
+                INSERT INTO absent (student_id, absent_datetime, reason)
+                SELECT s.student_id, NOW(), 'Auto-Absent (No Show)'
+                FROM students s
+                WHERE s.status = 'Active'
+                AND NOT EXISTS (
+                    SELECT 1 FROM present p 
+                    WHERE p.student_id = s.student_id 
+                    AND p.time_in::date = CURRENT_DATE
+                )
+                AND NOT EXISTS (
+                    SELECT 1 FROM absent a
+                    WHERE a.student_id = s.student_id 
+                    AND a.absent_datetime::date = CURRENT_DATE
+                )
+             `;
+             const result = await client.query(query);
+             if (result.rowCount > 0) {
+                 debugLogWriteToFile(`[AUTO-ABSENT] Marked ${result.rowCount} students as absent.`);
+             }
+        }
+    } catch (err) {
+        debugLogWriteToFile(`[AUTO-ABSENT] Error: ${err.message}`);
+    } finally {
+        client.release();
+    }
+}
+// Run check every minute
+setInterval(checkAutoAbsent, 60000);
 
 // [SECURITY-SETUP]
 // Update Security Questions

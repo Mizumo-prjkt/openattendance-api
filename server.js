@@ -3080,11 +3080,14 @@ app.get('/api/system/time', (req, res) => {
         isoTime = new Date().toISOString();
     }
 
+    const serverTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
     res.json({
         time: isoTime,
         timestamp: ntpTime,
         offset: safeOffset,
-        source: timeSource
+        source: timeSource,
+        timezone: serverTimezone
     });
 });
 

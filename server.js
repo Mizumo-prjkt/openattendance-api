@@ -3088,15 +3088,27 @@ app.get('/api/system/time', (req, res) => {
     });
 });
 
+// [AUTO-ABSENT TRIGGER]
+// Manual Trigger for Auto-Absent Check
+app.post('/api/attendance/trigger-auto-absent', async (req, res) => {
+    try {
+        const count = await checkAutoAbsent();
+        res.json({ success: true, marked_count: count });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // [AUTO-ABSENT]
 // Check for students who haven't logged in by time_out_target
 async function checkAutoAbsent() {
-    if (typeof pool === 'undefined') return;
+    if (typeof pool === 'undefined') return 0;
     const client = await pool.connect();
+    let count = 0;
     try {
         // 1. Get Config
         const configRes = await client.query("SELECT time_out_target FROM configurations LIMIT 1");
-        if (configRes.rows.length === 0) return;
+        if (configRes.rows.length === 0) return 0;
         
         const timeOutTargetStr = configRes.rows[0].time_out_target || '16:00:00';
         
@@ -3128,6 +3140,7 @@ async function checkAutoAbsent() {
                 )
              `;
              const result = await client.query(query);
+             count = result.rowCount;
              if (result.rowCount > 0) {
                  debugLogWriteToFile(`[AUTO-ABSENT] Marked ${result.rowCount} students as absent.`);
              }
@@ -3137,6 +3150,7 @@ async function checkAutoAbsent() {
     } finally {
         client.release();
     }
+    return count;
 }
 // Run check every minute
 setInterval(checkAutoAbsent, 60000);

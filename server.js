@@ -35,6 +35,7 @@ const multer = require('multer'); // Added missing requirement based on code usa
 const QRCode = require('qrcode');
 const archiver = require('archiver');
 const NTP = require('ntp-time');
+const Holidays = require('date-holidays');
 let ZteModem;
 try {
     ZteModem = require('@zigasebenik/zte-sms');
@@ -3410,4 +3411,118 @@ app.post('/api/auth/recovery/reset-via-question', async (req, res) => {
     } finally {
         client.release();
     }
+});
+
+// [CALENDAR]
+// Get Holidays (Public + Custom)
+app.get('/api/calendar/holidays', async (req, res) => {
+    const { year } = req.query;
+    const targetYear = parseInt(year) || new Date().getFullYear();
+    const client = await pool.connect();
+    
+    try {
+        // 1. Get Config
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS calendar_config (
+                id SERIAL PRIMARY KEY,
+                country TEXT DEFAULT 'PH',
+                state TEXT,
+                region TEXT
+            )
+        `);
+        // Ensure one row exists
+        let configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
+        if (configRes.rows.length === 0) {
+             await client.query("INSERT INTO calendar_config (country) VALUES ('PH')");
+             configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
+        }
+        const config = configRes.rows[0];
+
+        // 2. Get Public Holidays via date-holidays
+        const hd = new Holidays(config.country, config.state, config.region);
+        const publicHolidays = hd.getHolidays(targetYear).map(h => ({
+            id: `pub-${h.date}`, // simple unique id
+            name: h.name,
+            date: h.date.split(' ')[0], // YYYY-MM-DD
+            type: h.type, // public, bank, school, optional, observance
+            source: 'public'
+        }));
+
+        // 3. Get Custom Holidays from DB
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS calendar_custom_holidays (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                date TEXT NOT NULL,
+                type TEXT DEFAULT 'event'
+            )
+        `);
+        
+        // Filter custom holidays by year (assuming date is YYYY-MM-DD string)
+        const customRes = await client.query('SELECT * FROM calendar_custom_holidays WHERE date LIKE $1', [`${targetYear}-%`]);
+        const customHolidays = customRes.rows.map(h => ({
+            id: h.id,
+            name: h.name,
+            date: h.date,
+            type: h.type,
+            source: 'custom'
+        }));
+
+        // 4. Merge
+        res.json([...publicHolidays, ...customHolidays]);
+
+    } catch (err) {
+        debugLogWriteToFile(`[CALENDAR] GET ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Add Custom Holiday
+app.post('/api/calendar/holidays/custom', async (req, res) => {
+    const { name, date, type } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('INSERT INTO calendar_custom_holidays (name, date, type) VALUES ($1, $2, $3)', [name, date, type]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[CALENDAR] ADD CUSTOM ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Delete Custom Holiday
+app.delete('/api/calendar/holidays/custom', async (req, res) => {
+    const { id } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('DELETE FROM calendar_custom_holidays WHERE id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[CALENDAR] DELETE CUSTOM ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Get/Update Calendar Config
+app.get('/api/calendar/config', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const resDb = await client.query('SELECT * FROM calendar_config LIMIT 1');
+        res.json(resDb.rows[0] || { country: 'PH' });
+    } catch (err) { res.status(500).json({ error: err.message }); } finally { client.release(); }
+});
+
+app.post('/api/calendar/config', async (req, res) => {
+    const { country, state, region } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('UPDATE calendar_config SET country = $1, state = $2, region = $3', [country, state, region]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); } finally { client.release(); }
 });

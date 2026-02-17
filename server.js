@@ -3158,6 +3158,65 @@ async function checkAutoAbsent() {
 // Run check every minute
 setInterval(checkAutoAbsent, 60000);
 
+// [EVENT STATUS WATCHDOG TRIGGER]
+app.post('/api/events/trigger-status-update', async (req, res) => {
+    try {
+        const count = await checkEventStatus();
+        res.json({ success: true, updated_count: count });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// [EVENT STATUS WATCHDOG]
+// Automatically update event status based on time
+async function checkEventStatus() {
+    if (typeof pool === 'undefined') return 0;
+    const client = await pool.connect();
+    let updates = 0;
+    try {
+        // Get Current Time (NTP Corrected)
+        const nowMs = Date.now() + (globalTimeOffset || 0);
+        const now = new Date(nowMs);
+
+        // 1. Set to Ongoing
+        // Events that are 'planned', start time has passed, and end time hasn't passed
+        const ongoingRes = await client.query(`
+            UPDATE events 
+            SET status = 'ongoing' 
+            WHERE status = 'planned' 
+            AND start_datetime <= $1 
+            AND end_datetime > $1
+        `, [now]);
+        
+        if (ongoingRes.rowCount > 0) {
+            debugLogWriteToFile(`[EVENT WATCHDOG] Set ${ongoingRes.rowCount} events to 'ongoing'.`);
+            updates += ongoingRes.rowCount;
+        }
+
+        // 2. Set to Completed
+        // Events that are 'planned' or 'ongoing', and end time has passed
+        const completedRes = await client.query(`
+            UPDATE events 
+            SET status = 'completed' 
+            WHERE status IN ('planned', 'ongoing') 
+            AND end_datetime <= $1
+        `, [now]);
+
+        if (completedRes.rowCount > 0) {
+            debugLogWriteToFile(`[EVENT WATCHDOG] Set ${completedRes.rowCount} events to 'completed'.`);
+            updates += completedRes.rowCount;
+        }
+
+    } catch (err) {
+        debugLogWriteToFile(`[EVENT WATCHDOG] Error: ${err.message}`);
+    } finally {
+        client.release();
+    }
+    return updates;
+}
+setInterval(checkEventStatus, 60000);
+
 // [SECURITY-SETUP]
 // Update Security Questions
 app.put('/api/staff/security-setup', async (req, res) => {

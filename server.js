@@ -47,9 +47,9 @@ try {
 let debugMode = false;
 let logFilePath;
 let argEnv = process.argv.slice(2);
-app.use(bodyParser.json({ 
+app.use(bodyParser.json({
     limit: '50mb'
- })); // I am trying to force payload to go max 50mb than standard 100kb
+})); // I am trying to force payload to go max 50mb than standard 100kb
 app.use(bodyParser.urlencoded({
     extended: true,
     limit: '50mb'
@@ -115,15 +115,15 @@ if (argEnv.includes('--debug')) { // Fixed typo argenv -> argEnv
     console.log("Setup is being run with --debug flag.");
     console.log("Which means, its being run in development mode.");
     console.log("Enabling extreme debug logging for development.");
-    debugMode = true; 
+    debugMode = true;
     // Now, create the logfile
     const __dayToday = new Date();
     const __timeToday = __dayToday.toLocaleTimeString().replace(/:/g, '-');
     const __dateToday = __dayToday.toLocaleDateString().replace(/\//g, '-');
     const logFileName = `debug-openattendance-log-server-${__dateToday}_${__timeToday}.log`;
     const logDir = path.join(__dirname, 'data', 'logs');
-    mkdirp.sync(logDir); 
-    logFilePath = path.join(logDir, logFileName); 
+    mkdirp.sync(logDir);
+    logFilePath = path.join(logDir, logFileName);
     fs.writeFileSync(logFilePath, `Debug Log Created on ${__dateToday} at ${__timeToday}\n\n`);
     debugLogWriteToFile(`Debug logging started. Log file: ${logFilePath}`);
 }
@@ -134,11 +134,11 @@ function debugLogWriteToFile(message) {
     const timeToday = dayToday.toLocaleTimeString();
     const dateToday = dayToday.toLocaleDateString().replace(/\//g, '-');
     const logEntry = `[${dateToday} ${timeToday}] ${message}\n`;
-    fs.appendFileSync(logFilePath, logEntry); 
+    fs.appendFileSync(logFilePath, logEntry);
 }
 
 // Override console.log to also write to log file in debug mode
-console.error = function(message) {
+console.error = function (message) {
     const dayToday = new Date();
     const timeToday = dayToday.toLocaleTimeString();
     const dateToday = dayToday.toLocaleDateString().replace(/\//g, '-');
@@ -152,7 +152,7 @@ console.error = function(message) {
 };
 
 // Also pass the warn to log
-console.warn = function(message) {
+console.warn = function (message) {
     const dayToday = new Date();
     const timeToday = dayToday.toLocaleTimeString();
     const dateToday = dayToday.toLocaleDateString().replace(/\//g, '-');
@@ -258,7 +258,7 @@ async function syncTimeWithNTP(retryCount = 0) {
 
         const ntpClient = new NTP.Client(ntpAddress, 123, { timeout: 3000 });
         const time = await ntpClient.syncTime();
-        
+
         if (!time || !time.time) throw new Error("Invalid NTP response");
 
         // Calculate offset: NTP and Local Time
@@ -278,7 +278,7 @@ async function syncTimeWithNTP(retryCount = 0) {
 
     } catch (err) {
         if (retryCount < maxRetries) {
-            console.warn(`[NTP]: Sync failed: ${err.message}. Retrying in ${retryCooldown/1000}s... (${retryCount + 1}/${maxRetries})`);
+            console.warn(`[NTP]: Sync failed: ${err.message}. Retrying in ${retryCooldown / 1000}s... (${retryCount + 1}/${maxRetries})`);
             setTimeout(() => syncTimeWithNTP(retryCount + 1), retryCooldown);
             return;
         }
@@ -296,11 +296,11 @@ function validateLocalTimeWithCountry(countryCode) {
     try {
         const targetZone = CountryTimezones[countryCode] || 'UTC';
         const now = new Date();
-        
+
         // Get formatted time strings to compare hours (simple validation)
         const options = { timeZone: targetZone, hour: 'numeric', hour12: false };
         const targetHour = new Intl.DateTimeFormat('en-US', options).format(now);
-        
+
         const localOptions = { hour: 'numeric', hour12: false };
         const localHour = new Intl.DateTimeFormat('en-US', localOptions).format(now);
 
@@ -347,7 +347,7 @@ pool.connect((err, client, release) => {
     release();
     console.log(`Successfully connected to PostgreSQL`);
     debugLogWriteToFile(`[POSTGRES]: Successfully connected to database.`);
-    
+
     // Check if tables exist, if not, run schema
     checkAndInitDB();
 });
@@ -375,7 +375,7 @@ async function checkAndInitDB() {
                 AND    table_name   = 'configurations'
             );
         `);
-        
+
         if (!res.rows[0].exists) {
             console.log('Database tables not found, creating new DB from schema');
             debugLogWriteToFile('[POSTGRES]: Database tables not found, creating new database from schema');
@@ -468,10 +468,10 @@ async function checkAndInitDB() {
 
 
             // We start nl this arg lmao, i dont like vscrolling this thing
-            if (checkColumn.rows.length === 0 || 
-                checkEvents.rows.length === 0 || 
-                checkEventCol.rows.length === 0 || 
-                checkEventEndCol.rows.length === 0 || 
+            if (checkColumn.rows.length === 0 ||
+                checkEvents.rows.length === 0 ||
+                checkEventCol.rows.length === 0 ||
+                checkEventEndCol.rows.length === 0 ||
                 checkEventTypeCol.rows.length === 0 ||
                 checkCreatedByCol.rows.length === 0 ||
                 checkEventStaffTable.rows.length === 0 ||
@@ -480,7 +480,7 @@ async function checkAndInitDB() {
                 checkEventNotesTable.rows.length === 0 ||
                 checkEventHashCol.rows.length === 0 ||
                 checkConfigPrincipal.rows.length === 0 ||
-                checkConfigVersion.rows.length === 0 ) {
+                checkConfigVersion.rows.length === 0) {
                 console.log('Detected outdated schema... Applying migration proceedures');
                 debugLogWriteToFile(`[POSTGRES]: Detected outdated schema... Applying migration proceedures`);
                 const migrationPath = path.join(__dirname, 'database_migration.sql');
@@ -507,20 +507,20 @@ async function checkAndInitDB() {
                 // 0. Check and Fix Column Types (Prevent CHAR padding issues)
                 const colsToFix = ['gender', 'status', 'emergency_contact_relationship'];
                 for (const col of colsToFix) {
-                     const res = await hotfixClient.query(`SELECT data_type FROM information_schema.columns WHERE table_name = 'students' AND column_name = $1`, [col]);
-                     if (res.rows.length > 0 && res.rows[0].data_type === 'character') {
-                         console.log(`[HOTFIX] Converting ${col} to TEXT to prevent padding issues...`);
-                         await hotfixClient.query(`ALTER TABLE students ALTER COLUMN ${col} TYPE TEXT`);
-                     }
+                    const res = await hotfixClient.query(`SELECT data_type FROM information_schema.columns WHERE table_name = 'students' AND column_name = $1`, [col]);
+                    if (res.rows.length > 0 && res.rows[0].data_type === 'character') {
+                        console.log(`[HOTFIX] Converting ${col} to TEXT to prevent padding issues...`);
+                        await hotfixClient.query(`ALTER TABLE students ALTER COLUMN ${col} TYPE TEXT`);
+                    }
                 }
-                
+
                 // 1. Sanitize Gender (Handle Case & Invalid Values)
                 await hotfixClient.query("UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male'");
                 await hotfixClient.query("UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female'");
                 await hotfixClient.query("UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other'");
                 // Catch-all: Set any remaining invalid values to 'Other' so constraint doesn't fail
                 await hotfixClient.query("UPDATE students SET gender = 'Other' WHERE gender NOT IN ('Male', 'Female', 'Other') AND gender IS NOT NULL");
-                
+
                 // 2. Re-apply Gender Constraint
                 await hotfixClient.query("ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check");
                 await hotfixClient.query("ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'))");
@@ -598,6 +598,35 @@ async function checkAndInitDB() {
                 // 13. Auto-Absent Support (Nullable staff_id)
                 await hotfixClient.query("ALTER TABLE absent ALTER COLUMN staff_id DROP NOT NULL");
 
+                // 14. Holiday & Schedule Configuration
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fixed_weekday_schedule BOOLEAN DEFAULT TRUE");
+                await hotfixClient.query("ALTER TABLE sections ADD COLUMN IF NOT EXISTS allowed_days TEXT");
+
+                // 15. Calendar Tables
+                await hotfixClient.query(`
+                    CREATE TABLE IF NOT EXISTS calendar_config (
+                        id SERIAL PRIMARY KEY,
+                        country TEXT DEFAULT 'PH',
+                        state TEXT,
+                        region TEXT
+                    )
+                `);
+
+                // Ensure default calendar config
+                const calConfigCheck = await hotfixClient.query('SELECT 1 FROM calendar_config LIMIT 1');
+                if (calConfigCheck.rows.length === 0) {
+                    await hotfixClient.query("INSERT INTO calendar_config (country) VALUES ('PH')");
+                }
+
+                await hotfixClient.query(`
+                    CREATE TABLE IF NOT EXISTS calendar_custom_holidays (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        type TEXT DEFAULT 'event'
+                    )
+                `);
+
                 await hotfixClient.query('COMMIT');
                 console.log('Constraint hotfixes applied successfully.');
             } catch (err) {
@@ -643,7 +672,7 @@ function brkln(type) {
 app.post('/api/benchmark/sequential-write', (req, res) => {
     // Postgres uses $1, $2, etc. RETURNING id is needed to get the inserted ID back.
     const insert = 'INSERT INTO benchmark_test (col_text1, col_text2, col_int1) VALUES ($1, $2, $3) RETURNING id';
-    
+
     pool.query(insert, ["seq_write", `random_text_${Math.random()}`, Math.floor(Math.random() * 1000)], (err, result) => {
         if (err) {
             res.status(500).json({
@@ -675,9 +704,9 @@ app.post('/api/benchmark/bulk-write', async (req, res) => {
     try {
         debugLogWriteToFile("[SQL-BENCHMARK: BW]: BEGIN TRANSACTION");
         await client.query('BEGIN');
-        
+
         const insertText = 'INSERT INTO benchmark_test (col_text1, col_text2, col_int1) VALUES ($1, $2, $3)';
-        
+
         for (const record of records) {
             await client.query(insertText, [record.col_text1, record.col_text2, record.col_int1]);
         }
@@ -762,7 +791,7 @@ app.post('/api/setup/create-admin', async (req, res) => {
             error: 'Username, Password, Name, Staff ID, and Staff Type are required.'
         });
     }
-    
+
     const client = await pool.connect();
 
     try {
@@ -826,10 +855,10 @@ app.post('/api/benchmark/cleanup', (req, res) => {
                 "error": err.message
             });
         }
-        
+
         debugLogWriteToFile(`[CLNP]: Cleanup complete for benchmark_test.`);
         res.json({
-            message: "success", 
+            message: "success",
             deleted_rows: "All (Truncated)"
         });
     });
@@ -1004,15 +1033,15 @@ app.post('/api/students/add', async (req, res) => {
         const s_ec_phone = emergency_contact_phone ? emergency_contact_phone.trim() : null;
         const s_ec_rel = emergency_contact_relationship ? emergency_contact_relationship.trim().toLowerCase() : null;
 
-        
+
         let imagePath = null;
         if (profile_image && profile_image.startsWith('data:image')) {
-             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
-             const buffer = Buffer.from(base64Data, 'base64');
-             const fileName = `student_${s_student_id}_${Date.now()}.png`;
-             const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
-             fs.writeFileSync(filePath, buffer);
-             imagePath = `/assets/images/student_profiles/${fileName}`;
+            const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+            const buffer = Buffer.from(base64Data, 'base64');
+            const fileName = `student_${s_student_id}_${Date.now()}.png`;
+            const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
+            fs.writeFileSync(filePath, buffer);
+            imagePath = `/assets/images/student_profiles/${fileName}`;
         }
 
         // Sanitize gender to match DB constraint (Title Case)
@@ -1063,15 +1092,15 @@ app.put('/api/students/update', async (req, res) => {
         const s_ec_phone = emergency_contact_phone ? emergency_contact_phone.trim() : null;
         const s_ec_rel = emergency_contact_relationship ? emergency_contact_relationship.trim().toLowerCase() : null;
 
-        
-        let imagePath = profile_image; 
+
+        let imagePath = profile_image;
         if (profile_image && profile_image.startsWith('data:image')) {
-             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
-             const buffer = Buffer.from(base64Data, 'base64');
-             const fileName = `student_${s_student_id}_${Date.now()}.png`;
-             const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
-             fs.writeFileSync(filePath, buffer);
-             imagePath = `/assets/images/student_profiles/${fileName}`;
+            const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+            const buffer = Buffer.from(base64Data, 'base64');
+            const fileName = `student_${s_student_id}_${Date.now()}.png`;
+            const filePath = path.join(__dirname, 'runtime/shared/images/student_profiles', fileName);
+            fs.writeFileSync(filePath, buffer);
+            imagePath = `/assets/images/student_profiles/${fileName}`;
         }
 
         // Sanitize gender to match DB constraint (Title Case)
@@ -1144,7 +1173,7 @@ app.post('/api/setup/validate-admin', (req, res) => {
                 error: `Database error during validation: ${err.message}`
             })
         }
-        
+
         const admin = result.rows[0];
 
         if (!admin) {
@@ -1168,7 +1197,7 @@ app.post('/api/setup/validate-admin', (req, res) => {
                     message: 'Admin credentials are valid',
                     staff_id: admin.staff_id,
                     name: admin.name,
-                    role: admin.staff_type             
+                    role: admin.staff_type
                 })
             } else {
                 debugLogWriteToFile(`[VA-ADMIN]: Admin credentials during verification did not match at all... Are you sure you inputted the correct letters?`)
@@ -1215,7 +1244,7 @@ app.post('/api/setup/configure', upload, (req, res) => {
     // and req.file should have the file.
 
     const { school_name, school_type, address, organization_hotline, country_code } = req.body;
-    const logo_directory = req.file ? `/assets/images/logos/${req.file.filename}`: null;
+    const logo_directory = req.file ? `/assets/images/logos/${req.file.filename}` : null;
 
     if (!school_name || !country_code) {
         debugLogWriteToFile('[CONF]: Configuration save failed, school name or country code was not provided at all.');
@@ -1231,7 +1260,7 @@ app.post('/api/setup/configure', upload, (req, res) => {
                 error: 'Database Error while checking for existing configuration'
             });
         }
-        
+
         if (result.rows[0].count > 0) {
             debugLogWriteToFile(`[CONF]: Configuration Blocked: A configuration entry already exists`);
             return res.status(409).json({
@@ -1245,7 +1274,7 @@ app.post('/api/setup/configure', upload, (req, res) => {
             ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING config_id
         `;
 
-        const params = [school_name , school_type || null, address || null, logo_directory , organization_hotline || null , country_code]
+        const params = [school_name, school_type || null, address || null, logo_directory, organization_hotline || null, country_code]
 
         pool.query(insert, params, (insertErr, result) => {
             if (insertErr) {
@@ -1254,7 +1283,7 @@ app.post('/api/setup/configure', upload, (req, res) => {
                     error: insertErr.message
                 });
             }
-            
+
             const newId = result.rows[0].config_id;
             debugLogWriteToFile(`[CONF]: Configuration saved successfully with the ID: ${newId}`);
             res.json({
@@ -1281,22 +1310,22 @@ app.get('/api/setup/verify-schema', async (req, res) => {
         // 3. We confirm that all table should exist
         const expectedTableNames = (schemaSql.match(/CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/gi) || [])
             .map(s => s.match(/CREATE TABLE IF NOT EXISTS\s+`?(\w+)`?/i)[1]);
-        
+
         // Postgres-specific table check
         const getTables = async () => {
-             const res = await pool.query(`
+            const res = await pool.query(`
                 SELECT table_name 
                 FROM information_schema.tables 
                 WHERE table_schema = 'public'
              `);
-             return res.rows.map(r => r.table_name);
+            return res.rows.map(r => r.table_name);
         };
 
         const actualTables = await getTables();
 
         const actions = expectedTableNames.map(table => ({
             table: table,
-            status: actualTables.includes(table) ? 'exists': 'missing'
+            status: actualTables.includes(table) ? 'exists' : 'missing'
         }));
 
         const allTablesExist = actions.every(a => a.status === 'exists');
@@ -1453,7 +1482,7 @@ app.get('/api/dashboard/analytics', async (req, res) => {
                 GROUP BY s.classroom_section
             `;
             const res = await client.query(query, params);
-            
+
             return res.rows.map(row => {
                 const section = row.classroom_section;
                 const present = parseInt(row.present_count);
@@ -1511,7 +1540,7 @@ app.post('/api/setup/migrate', async (req, res) => {
     try {
         const migrationPath = path.join(__dirname, 'database_migration.sql');
         if (!fs.existsSync(migrationPath)) {
-             throw new Error("Migration file not found!");
+            throw new Error("Migration file not found!");
         }
         const migrationSql = fs.readFileSync(migrationPath, 'utf8');
 
@@ -1523,18 +1552,18 @@ app.post('/api/setup/migrate', async (req, res) => {
 
             // First we check if the column exists to avoid crash on old DBs
             const checkCol = await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'configurations' and column_name = 'db_version'`);
-            
+
             let currentVersion = '0.0.0';
             if (checkCol.rows.length > 0) {
                 const configRes = await client.query('SELECT db_version FROM configurations LIMIT 1');
                 currentVersion = configRes.rows[0]?.db_version || '0.0.0';
             }
-            
+
             if (compareVersions(newVersion, currentVersion) <= 0) {
                 throw new Error(`Migration version: (${newVersion}) is not greater than current database version. Any downgrades or re-runs are not allowed.`);
             }
         }
-        
+
         await client.query(migrationSql);
 
         if (newVersion) {
@@ -1542,7 +1571,7 @@ app.post('/api/setup/migrate', async (req, res) => {
             await client.query(`UPDATE configurations SET db_version = $1`, [newVersion]);
         }
 
-        
+
         debugLogWriteToFile(`[MIGRATE]: Migration executed successfully.`);
         res.json({
             message: "Migration executed successfully."
@@ -1602,6 +1631,7 @@ app.get('/api/sections/list', async (req, res) => {
                 s.grade_level,
                 s.strand,
                 s.schedule_data,
+                s.allowed_days,
                 (SELECT COUNT(*)::int FROM students st WHERE st.classroom_section = s.section_name AND st.status = 'Active') as student_count
             FROM sections s
             LEFT JOIN staff_accounts sa ON s.adviser_staff_id = sa.staff_id
@@ -1618,7 +1648,8 @@ app.get('/api/sections/list', async (req, res) => {
             grade_level: row.grade_level,
             strand: row.strand,
             student_count: row.student_count,
-            schedule: row.schedule_data || []
+            schedule: row.schedule_data || [],
+            allowed_days: row.allowed_days || ''
         }));
         res.json(mapped);
     } catch (err) {
@@ -1664,11 +1695,11 @@ app.post('/api/sections/add', async (req, res) => {
     const client = await pool.connect();
     try {
         const query = `
-            INSERT INTO sections (section_name, adviser_staff_id, room_number, grade_level, strand ,schedule_data)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO sections (section_name, adviser_staff_id, room_number, grade_level, strand, schedule_data, allowed_days)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING section_id
         `;
-        await client.query(query, [name, adviser_id || null, room, grade_level || null , strand || null , JSON.stringify(schedule || [])]);
+        await client.query(query, [name, adviser_id || null, room, grade_level || null, strand || null, JSON.stringify(schedule || []), req.body.allowed_days || null]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SECTIONS] ADD ERROR: ${err.message}`);
@@ -1684,10 +1715,10 @@ app.put('/api/sections/update', async (req, res) => {
     try {
         const query = `
             UPDATE sections
-            SET section_name = $1, adviser_staff_id = $2, room_number = $3, grade_level = $4, strand = $5, schedule_data = $6
-            WHERE section_id = $7
+            SET section_name = $1, adviser_staff_id = $2, room_number = $3, grade_level = $4, strand = $5, schedule_data = $6, allowed_days = $7
+            WHERE section_id = $8
         `;
-        await client.query(query, [name, adviser_id || null, room, grade_level || null, strand || null, JSON.stringify(schedule || []), id]);
+        await client.query(query, [name, adviser_id || null, room, grade_level || null, strand || null, JSON.stringify(schedule || []), req.body.allowed_days || null, id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SECTIONS] UPDATE ERROR: ${err.message}`);
@@ -1745,15 +1776,15 @@ app.post('/api/staff/add', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        
+
         let imagePath = null;
         if (profile_image && profile_image.startsWith('data:image')) {
-             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
-             const buffer = Buffer.from(base64Data, 'base64');
-             const fileName = `staff_${staff_id}_${Date.now()}.png`;
-             const filePath = path.join(__dirname, 'runtime/shared/images/staff_profiles', fileName);
-             fs.writeFileSync(filePath, buffer);
-             imagePath = `/assets/images/staff_profiles/${fileName}`;
+            const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+            const buffer = Buffer.from(base64Data, 'base64');
+            const fileName = `staff_${staff_id}_${Date.now()}.png`;
+            const filePath = path.join(__dirname, 'runtime/shared/images/staff_profiles', fileName);
+            fs.writeFileSync(filePath, buffer);
+            imagePath = `/assets/images/staff_profiles/${fileName}`;
         }
 
         const active = status === 'Active' ? 1 : 0;
@@ -1791,7 +1822,7 @@ app.post('/api/staff/add', async (req, res) => {
 app.post('/api/staff/check-username', async (req, res) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'Username required' });
-    
+
     const client = await pool.connect();
     try {
         const result = await client.query('SELECT COUNT(*) FROM staff_login WHERE username = $1', [username]);
@@ -1811,15 +1842,15 @@ app.put('/api/staff/update', async (req, res) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        
-        let imagePath = profile_image; 
+
+        let imagePath = profile_image;
         if (profile_image && profile_image.startsWith('data:image')) {
-             const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
-             const buffer = Buffer.from(base64Data, 'base64');
-             const fileName = `staff_${staff_id}_${Date.now()}.png`;
-             const filePath = path.join(__dirname, 'runtime/shared/images/staff_profiles', fileName);
-             fs.writeFileSync(filePath, buffer);
-             imagePath = `/assets/images/staff_profiles/${fileName}`;
+            const base64Data = profile_image.replace(/^data:image\/\w+;base64,/, "");
+            const buffer = Buffer.from(base64Data, 'base64');
+            const fileName = `staff_${staff_id}_${Date.now()}.png`;
+            const filePath = path.join(__dirname, 'runtime/shared/images/staff_profiles', fileName);
+            fs.writeFileSync(filePath, buffer);
+            imagePath = `/assets/images/staff_profiles/${fileName}`;
         }
 
         const active = status === 'Active' ? 1 : 0;
@@ -1928,7 +1959,7 @@ app.post('/api/events/add', async (req, res) => {
 
 // Update event
 app.put('/api/events/update', async (req, res) => {
-    const { id, name, type, location, start, end, status, event_hash, secure_mode} = req.body;
+    const { id, name, type, location, start, end, status, event_hash, secure_mode } = req.body;
     const client = await pool.connect();
     try {
         const query = `
@@ -2036,7 +2067,7 @@ app.delete('/api/events/attendance/delete', async (req, res) => {
 app.get('/api/events/export-tickets/:event_id', async (req, res) => {
     const { event_id } = req.params;
     const client = await pool.connect();
-    
+
     try {
         // 1. Get Event Details
         const eventRes = await client.query('SELECT event_name, event_hash, secure_mode FROM events WHERE event_id = $1', [event_id]);
@@ -2055,7 +2086,7 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
         const filename = `tickets_${event.event_name.replace(/\s+/g, '-')}.zip`;
         res.attachment(filename);
         const archive = archiver('zip', { zlib: { level: 9 } });
-        
+
         archive.on('error', (err) => { throw err; });
         archive.pipe(res);
 
@@ -2074,7 +2105,7 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
             const studentName = `${student.first_name}-${student.last_name}`.replace(/\s+/g, '-');
             const eventName = event.event_name.replace(/\s+/g, '-');
             const imgFilename = `event_${eventName}_${studentName}.png`;
-            
+
             archive.append(buffer, { name: imgFilename });
         }
 
@@ -2136,7 +2167,7 @@ app.get('/api/reports/daily', async (req, res) => {
     try {
         // Default to prev 30 days if not provided
         const end = end_date || new Date().toISOString().split('T')[0];
-        const start = start_date || new Date(Date.now() - 30 * 24 *60 * 1000).toISOString().split('T')[0];
+        const start = start_date || new Date(Date.now() - 30 * 24 * 60 * 1000).toISOString().split('T')[0];
 
         const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
         const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
@@ -2159,7 +2190,7 @@ app.get('/api/reports/daily', async (req, res) => {
     } catch (err) {
         debugLogWriteToFile(`[REPORTS]: Daily Report Error: ${err.message}`)
         console.log(`[REPORT]: Fatal error on the Daily report: ${err.message}`);
-        res.status(500).json({error:err.message});
+        res.status(500).json({ error: err.message });
     } finally {
         client.release();
     }
@@ -2177,7 +2208,7 @@ app.get('/api/export/permissions', async (req, res) => {
         // 1. Get Staff Role
         const staffRes = await client.query('SELECT staff_type FROM staff_accounts WHERE staff_id = $1', [staff_id]);
         if (staffRes.rows.length === 0) return res.status(404).json({ error: 'Staff not found' });
-        
+
         const role = staffRes.rows[0].staff_type;
         let sections = [];
 
@@ -2235,7 +2266,7 @@ app.get('/api/export/generate', async (req, res) => {
             FROM present 
             WHERE time_in >= $1::date AND time_in <= $2::date
         `, [startOfMonth, endOfMonth]);
-        
+
         const attendanceMap = {};
         attendanceRes.rows.forEach(row => {
             if (!attendanceMap[row.student_id]) attendanceMap[row.student_id] = new Set();
@@ -2266,7 +2297,7 @@ app.get('/api/export/generate', async (req, res) => {
                 `"${student.first_name}"`,
                 student.gender
             ];
-            
+
             let presentCount = 0;
             daysInMonth.forEach(day => {
                 if (attendanceMap[student.student_id] && attendanceMap[student.student_id].has(day)) {
@@ -2276,13 +2307,13 @@ app.get('/api/export/generate', async (req, res) => {
                     row.push('A');
                 }
             });
-            
+
             row.push(presentCount);
             csvContent += row.join(',') + '\n';
         });
 
         const filename = `Attendance_${sectionName.replace(/\s+/g, '_')}_${month}.csv`;
-        
+
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.send(csvContent);
@@ -2315,7 +2346,7 @@ app.get('/api/sms/settings', async (req, res) => {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-        
+
         // Hotfix: Add columns for ZTE/Modem IP if they don't exist
         await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_ip TEXT`);
         await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_password TEXT`);
@@ -2387,9 +2418,9 @@ app.post('/api/sms/send', async (req, res) => {
         if (settings && settings.sms_enabled) {
             if (settings.provider_type === 'zte') {
                 if (!ZteModem) throw new Error("ZTE-SMS library is not installed on the server.");
-                const myModem = new ZteModem({ 
-                    modemIP: settings.modem_ip || '192.168.0.1', 
-                    modemPassword: settings.modem_password 
+                const myModem = new ZteModem({
+                    modemIP: settings.modem_ip || '192.168.0.1',
+                    modemPassword: settings.modem_password
                 });
                 await myModem.sendSms(recipient_number, message_body);
             }
@@ -2429,7 +2460,7 @@ app.get('/api/id-cards/list', async (req, res) => {
             ORDER BY last_name ASC
         `;
         const studentsRes = await client.query(studentsQuery);
-        
+
         // Staff
         const staffQuery = `
             SELECT 
@@ -2495,21 +2526,21 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target } = req.body;
-    
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule } = req.body;
+
     const client = await pool.connect();
     try {
         // Check if config exists (Single Row Policy)
         const check = await client.query('SELECT config_id FROM configurations LIMIT 1');
-        
+
         if (check.rows.length === 0) {
-             // Insert (Only if table is empty)
-             const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
-             await client.query(
-                 `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target)
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00']
-             );
+            // Insert (Only if table is empty)
+            const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
+            await client.query(
+                `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00', fixed_weekday_schedule === 'true']
+            );
         } else {
             // Update existing row
             const id = check.rows[0].config_id;
@@ -2519,17 +2550,17 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
                 time_in_start = COALESCE($9, time_in_start), time_late_threshold = COALESCE($10, time_late_threshold), time_out_target = COALESCE($11, time_out_target)
             `;
             const params = [
-                school_name || null, school_id || null, country_code || null, address || null, 
+                school_name || null, school_id || null, country_code || null, address || null,
                 principal_name || null, principal_title || null, school_year || null, ntp_server || null,
                 time_in_start || null, time_late_threshold || null, time_out_target || null
             ];
-            
+
             if (req.file) {
-                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode) WHERE config_id = $14`;
-                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id );
+                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule) WHERE config_id = $14`;
+                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null);
             } else {
-                query += `, maintenance_mode = COALESCE($12, maintenance_mode) WHERE config_id = $13`;
-                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id);
+                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule) WHERE config_id = $13`;
+                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null);
             }
             await client.query(query, params);
         }
@@ -2597,7 +2628,7 @@ app.post('/api/database/backup-local', (req, res) => {
             debugLogWriteToFile(`[DATABASE] Local Backup Error: ${error.message}`);
             return res.status(500).json({ error: 'Backup generation failed', details: error.message });
         }
-        
+
         debugLogWriteToFile(`[DATABASE] Local Backup created successfully at ${filePath}`);
         res.json({ success: true, message: 'Backup saved to server storage.', path: filePath, filename: filename });
     });
@@ -2617,7 +2648,7 @@ const uploadBackup = multer({ storage: backupStorage }).single('backup_file');
 
 app.post('/api/database/restore', uploadBackup, (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No backup file provided' });
-    
+
     const filePath = req.file.path;
     const dbUser = process.env.DB_USER || 'postgres';
     const dbHost = process.env.DB_HOST || 'localhost';
@@ -2634,13 +2665,13 @@ app.post('/api/database/restore', uploadBackup, (req, res) => {
 
     exec(command, { env }, (error, stdout, stderr) => {
         // Cleanup file
-        fs.unlink(filePath, () => {});
+        fs.unlink(filePath, () => { });
 
         if (error) {
             debugLogWriteToFile(`[DATABASE] Restore Error: ${error.message}`);
             return res.status(500).json({ error: 'Restore failed', details: error.message });
         }
-        
+
         debugLogWriteToFile(`[DATABASE] Restore completed successfully`);
         res.json({ success: true, message: 'Database restored successfully' });
     });
@@ -2659,13 +2690,13 @@ app.get('/api/database/stats', async (req, res) => {
             ORDER BY pg_total_relation_size(relid) DESC;
         `;
         const result = await client.query(query);
-        
+
         const stats = result.rows.map(row => ({
             table: row.table_name,
             rows: parseInt(row.row_count || 0),
             size: row.total_size
         }));
-        
+
         res.json(stats);
     } catch (err) {
         debugLogWriteToFile(`[DATABASE] STATS ERROR: ${err.message}`);
@@ -2734,7 +2765,7 @@ app.get('/api/system/licenses', (req, res) => {
                     try {
                         const pkg = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
                         if (!pkg.name) return;
-                        
+
                         let license = pkg.license;
                         if (!license && pkg.licenses) {
                             // Handle array or object format
@@ -2744,7 +2775,7 @@ app.get('/api/system/licenses', (req, res) => {
                                 license = pkg.licenses.type;
                             }
                         }
-                        
+
                         const info = {
                             name: pkg.name,
                             version: pkg.version,
@@ -2788,56 +2819,56 @@ app.get('/api/system/licenses', (req, res) => {
             }
         };
 
-                // Helper to process license-checker JSON report
-                // M: Ah fuu its misaligned.
-                const processLicenseFile = (filePath, sourceLabel) => {
-                    if (fs.existsSync(filePath)) {
-                        try {
-                            const raw = fs.readFileSync(filePath, 'utf8');
-                            const data = JSON.parse(raw);
-                            Object.keys(data).forEach(key => {
-                                // key format: package@version
-                                const lastAt = key.lastIndexOf('@');
-                                const name = key.substring(0, lastAt);
-                                const version = key.substring(lastAt + 1);
-                                const item = data[key];
-        
-                                let license = item.licenses;
-                                if (Array.isArray(license)) license = license.join(' OR ');
-        
-                                const info = {
-                                    name: name,
-                                    version: version,
-                                    license: license || 'Unknown',
-                                    repository: item.repository,
-                                    source: sourceLabel
-                                };
-                                
-                                if (packagesMap.has(name)) {
-                                    const existing = packagesMap.get(name);
-                                    if (existing.source !== info.source) existing.source = 'Shared';
-                                } else {
-                                    packagesMap.set(name, info);
-                                }
-                            });
-                            return true;
-                        } catch (e) { 
-                            debugLogWriteToFile(`[LICENSES] Error reading license file ${filePath}: ${e.message}`);
-                            return false; 
+        // Helper to process license-checker JSON report
+        // M: Ah fuu its misaligned.
+        const processLicenseFile = (filePath, sourceLabel) => {
+            if (fs.existsSync(filePath)) {
+                try {
+                    const raw = fs.readFileSync(filePath, 'utf8');
+                    const data = JSON.parse(raw);
+                    Object.keys(data).forEach(key => {
+                        // key format: package@version
+                        const lastAt = key.lastIndexOf('@');
+                        const name = key.substring(0, lastAt);
+                        const version = key.substring(lastAt + 1);
+                        const item = data[key];
+
+                        let license = item.licenses;
+                        if (Array.isArray(license)) license = license.join(' OR ');
+
+                        const info = {
+                            name: name,
+                            version: version,
+                            license: license || 'Unknown',
+                            repository: item.repository,
+                            source: sourceLabel
+                        };
+
+                        if (packagesMap.has(name)) {
+                            const existing = packagesMap.get(name);
+                            if (existing.source !== info.source) existing.source = 'Shared';
+                        } else {
+                            packagesMap.set(name, info);
                         }
-                    }
+                    });
+                    return true;
+                } catch (e) {
+                    debugLogWriteToFile(`[LICENSES] Error reading license file ${filePath}: ${e.message}`);
                     return false;
-                };
+                }
+            }
+            return false;
+        };
 
         // Frontend: Try to read generated report from various possible locations
         // Priority: Env Var -> Adjacent File (Prod) -> Dev Paths
-                const possiblePaths = [
-                    process.env.FRONTEND_LICENSE_PATH,
-                    path.join(__dirname, 'ff-licenses.json'),
-                    // This two are redundancies
-                    path.join(__dirname, '../openattendance-frontend/public/licenses.json'),
-                    path.join(__dirname, '../openattendance-frontend/dist/licenses.json')
-                ];
+        const possiblePaths = [
+            process.env.FRONTEND_LICENSE_PATH,
+            path.join(__dirname, 'ff-licenses.json'),
+            // This two are redundancies
+            path.join(__dirname, '../openattendance-frontend/public/licenses.json'),
+            path.join(__dirname, '../openattendance-frontend/dist/licenses.json')
+        ];
 
         for (const p of possiblePaths) {
             if (p && processLicenseFile(p, 'Frontend')) {
@@ -2864,29 +2895,29 @@ app.get('/api/system/licenses', (req, res) => {
 app.get('/api/benchmark/comprehensive', async (req, res) => {
     const client = await pool.connect();
     const results = {};
-    
+
     try {
         // 0. Setup: Ensure Benchmark Tables Exist
         const check = await client.query("SELECT to_regclass('public.perf_test_single_idx')");
         if (!check.rows[0].to_regclass) {
-             debugLogWriteToFile(`[BENCHMARK] Tables missing. Applying benchmark schema...`);
-             const schemaPath = path.join(__dirname, 'database_benchmark_schema.sql');
-             if (fs.existsSync(schemaPath)) {
-                 const sql = fs.readFileSync(schemaPath, 'utf8');
-                 await client.query(sql);
-             } else {
-                 throw new Error('Benchmark schema file missing.');
-             }
+            debugLogWriteToFile(`[BENCHMARK] Tables missing. Applying benchmark schema...`);
+            const schemaPath = path.join(__dirname, 'database_benchmark_schema.sql');
+            if (fs.existsSync(schemaPath)) {
+                const sql = fs.readFileSync(schemaPath, 'utf8');
+                await client.query(sql);
+            } else {
+                throw new Error('Benchmark schema file missing.');
+            }
         }
 
         // 1. One by one index writing, reading, and changing
         {
             const start = Date.now();
             await client.query('TRUNCATE perf_test_single_idx');
-            for(let i=0; i<100; i++) {
+            for (let i = 0; i < 100; i++) {
                 await client.query('INSERT INTO perf_test_single_idx (data, indexed_col) VALUES ($1, $2)', ['test_data', i]);
                 await client.query('SELECT * FROM perf_test_single_idx WHERE indexed_col = $1', [i]);
-                await client.query('UPDATE perf_test_single_idx SET data = $1 WHERE id = $2', ['updated', i+1]);
+                await client.query('UPDATE perf_test_single_idx SET data = $1 WHERE id = $2', ['updated', i + 1]);
             }
             results.single_index_rw_100_ops = `${Date.now() - start}ms`;
         }
@@ -2897,23 +2928,23 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
             await client.query('TRUNCATE perf_test_multi_idx');
             const promises = [];
             // Write
-            for(let i=0; i<200; i++) {
+            for (let i = 0; i < 200; i++) {
                 promises.push(client.query('INSERT INTO perf_test_multi_idx (data, col1, col2, col3) VALUES ($1, $2, $3, $4)', ['async', i, i, 'text']));
             }
             await Promise.all(promises);
             // Read
             const readPromises = [];
-            for(let i=0; i<200; i++) {
+            for (let i = 0; i < 200; i++) {
                 readPromises.push(client.query('SELECT * FROM perf_test_multi_idx WHERE col1 = $1', [i]));
             }
             await Promise.all(readPromises);
             // Delete
             const delPromises = [];
-            for(let i=0; i<200; i++) {
+            for (let i = 0; i < 200; i++) {
                 delPromises.push(client.query('DELETE FROM perf_test_multi_idx WHERE col1 = $1', [i]));
             }
             await Promise.all(delPromises);
-            
+
             results.async_multi_rw_delete_200_batch = `${Date.now() - start}ms`;
         }
 
@@ -2921,7 +2952,7 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
         {
             const start = Date.now();
             const tables = ['perf_test_random_1', 'perf_test_random_2', 'perf_test_random_3'];
-            for(let i=0; i<150; i++) {
+            for (let i = 0; i < 150; i++) {
                 const tbl = tables[Math.floor(Math.random() * tables.length)];
                 await client.query(`INSERT INTO ${tbl} (val) VALUES ($1)`, ['random_val']);
                 await client.query(`SELECT * FROM ${tbl} LIMIT 1`);
@@ -2932,25 +2963,25 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
         // 4. Index Speed Comparison (Single vs Multi Overhead)
         // Using data from previous steps logic, we run a fresh micro-test
         {
-             const startSingle = Date.now();
-             for(let i=0; i<100; i++) await client.query('INSERT INTO perf_test_single_idx (data, indexed_col) VALUES ($1, $2)', ['comp', i]);
-             const timeSingle = Date.now() - startSingle;
+            const startSingle = Date.now();
+            for (let i = 0; i < 100; i++) await client.query('INSERT INTO perf_test_single_idx (data, indexed_col) VALUES ($1, $2)', ['comp', i]);
+            const timeSingle = Date.now() - startSingle;
 
-             const startMulti = Date.now();
-             for(let i=0; i<100; i++) await client.query('INSERT INTO perf_test_multi_idx (data, col1, col2, col3) VALUES ($1, $2, $3, $4)', ['comp', i, i, 't']);
-             const timeMulti = Date.now() - startMulti;
-             
-             results.index_overhead_100_inserts = {
-                 single_index: `${timeSingle}ms`,
-                 multi_index: `${timeMulti}ms`
-             };
+            const startMulti = Date.now();
+            for (let i = 0; i < 100; i++) await client.query('INSERT INTO perf_test_multi_idx (data, col1, col2, col3) VALUES ($1, $2, $3, $4)', ['comp', i, i, 't']);
+            const timeMulti = Date.now() - startMulti;
+
+            results.index_overhead_100_inserts = {
+                single_index: `${timeSingle}ms`,
+                multi_index: `${timeMulti}ms`
+            };
         }
 
         // 5. Barrage of commands (I/O Stress)
         {
             const start = Date.now();
             const barrage = [];
-            for(let i=0; i<1000; i++) {
+            for (let i = 0; i < 1000; i++) {
                 barrage.push(client.query('INSERT INTO perf_test_barrage (val) VALUES (NOW())'));
             }
             await Promise.all(barrage);
@@ -2964,7 +2995,7 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
             const startSize = Date.now();
             const payload = 'x'.repeat(4096); // 4KB payload
             // Insert 1024 rows to reach ~4MB
-            for(let i=0; i<1024; i++) {
+            for (let i = 0; i < 1024; i++) {
                 await client.query('INSERT INTO perf_test_size_growth (payload) VALUES ($1)', [payload]);
             }
             const sizeRes = await client.query("SELECT pg_size_pretty(pg_total_relation_size('perf_test_size_growth')) as size");
@@ -3002,8 +3033,8 @@ app.post('/api/attendance/scan', async (req, res) => {
                 studentIdToSearch = parts[0]; // <id>|<year>
             }
         }
-        
-        const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [studentIdToSearch]);        
+
+        const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [studentIdToSearch]);
         if (studentRes.rows.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
@@ -3011,11 +3042,11 @@ app.post('/api/attendance/scan', async (req, res) => {
 
         if (mode === 'event') {
             if (!event_id) return res.status(400).json({ error: 'Event ID required for event mode' });
-            
+
             // Check if already scanned for this event
             // We get the latest record to determine state
             const check = await client.query("SELECT id, time_out FROM event_attendance WHERE event_id = $1 AND student_id = $2 ORDER BY time_in DESC LIMIT 1", [event_id, student.student_id]);
-            
+
             if (scanType === 'in') {
                 // If latest record exists and has NO time_out, they are currently checked in.
                 if (check.rows.length > 0 && !check.rows[0].time_out) {
@@ -3030,19 +3061,19 @@ app.post('/api/attendance/scan', async (req, res) => {
                 // Time Out
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
-                
+
                 await client.query("UPDATE event_attendance SET time_out = NOW() WHERE id = $1", [check.rows[0].id]);
             }
         } else {
             // Normal Mode (Daily Attendance)
             const check = await client.query("SELECT present_id, time_out FROM present WHERE student_id = $1 AND time_in::date = CURRENT_DATE ORDER BY time_in DESC LIMIT 1", [student.student_id]);
-            
+
             if (scanType === 'in') {
                 if (check.rows.length > 0) {
-                     // For daily attendance, we typically enforce one record per day, or at least warn.
-                     // If they are already checked in (time_out is null), error.
-                     // If they checked out (time_out is set), we could allow re-entry, but for now let's say "Already present today".
-                     return res.status(409).json({ error: 'Already checked in today', student });
+                    // For daily attendance, we typically enforce one record per day, or at least warn.
+                    // If they are already checked in (time_out is null), error.
+                    // If they checked out (time_out is set), we could allow re-entry, but for now let's say "Already present today".
+                    return res.status(409).json({ error: 'Already checked in today', student });
                 }
                 await client.query(
                     "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, NOW(), $2, $3)",
@@ -3051,7 +3082,7 @@ app.post('/api/attendance/scan', async (req, res) => {
             } else {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
-                
+
                 await client.query("UPDATE present SET time_out = NOW() WHERE present_id = $1", [check.rows[0].present_id]);
             }
         }
@@ -3082,7 +3113,7 @@ app.get('/api/system/time', (req, res) => {
     const now = Date.now();
     const safeOffset = (typeof globalTimeOffset === 'number' && !isNaN(globalTimeOffset)) ? globalTimeOffset : 0;
     const ntpTime = now + safeOffset;
-    
+
     let isoTime;
     try {
         isoTime = new Date(ntpTime).toISOString();
@@ -3114,49 +3145,162 @@ app.post('/api/attendance/trigger-auto-absent', async (req, res) => {
 
 // [AUTO-ABSENT]
 // Check for students who haven't logged in by time_out_target
+// Helper: Check if today is a holiday
+async function isTodayHoliday(client, dateObj) {
+    try {
+        const year = dateObj.getFullYear();
+        const dateStr = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+
+        // 1. Get Config
+        const configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
+        const config = configRes.rows[0] || { country: 'PH' };
+
+        // 2. Check Public Holidays
+        const hd = new Holidays(config.country, config.state, config.region);
+        const isPublic = hd.isHoliday(dateObj); // Returns array or false/undefined
+
+        if (isPublic) return true;
+
+        // 3. Check Custom Holidays
+        const customRes = await client.query('SELECT 1 FROM calendar_custom_holidays WHERE date = $1', [dateStr]);
+        return customRes.rows.length > 0;
+
+    } catch (err) {
+        debugLogWriteToFile(`[HOLIDAY CHECK] Error: ${err.message}`);
+        return false; // Fail safe: assume school is open? Or closed? Open seems safer to avoid missing attendance.
+    }
+}
+
+// [AUTO-ABSENT]
+// Check for students who haven't logged in by time_out_target
 async function checkAutoAbsent() {
     if (typeof pool === 'undefined') return 0;
     const client = await pool.connect();
     let count = 0;
     try {
         // 1. Get Config
-        const configRes = await client.query("SELECT time_out_target FROM configurations LIMIT 1");
+        const configRes = await client.query("SELECT time_out_target, fixed_weekday_schedule FROM configurations LIMIT 1");
         if (configRes.rows.length === 0) return 0;
-        
-        const timeOutTargetStr = configRes.rows[0].time_out_target || '16:00:00';
-        
+
+        const config = configRes.rows[0];
+        const timeOutTargetStr = config.time_out_target || '16:00:00';
+        const fixedSchedule = config.fixed_weekday_schedule !== false; // Default true
+
         // 2. Get Current Time (NTP Corrected)
         const nowMs = Date.now() + (globalTimeOffset || 0);
         const now = new Date(nowMs);
-        
+
         // 3. Parse Target Time
         const [targetHour, targetMinute] = timeOutTargetStr.split(':').map(Number);
         const targetTime = new Date(now);
         targetTime.setHours(targetHour, targetMinute, 0, 0);
-        
+
         // 4. Compare & Execute
         if (now >= targetTime) {
-             const query = `
-                INSERT INTO absent (student_id, absent_datetime, reason)
-                SELECT s.student_id, NOW(), 'Auto-Absent (No Show)'
-                FROM students s
-                WHERE s.status = 'Active'
-                AND NOT EXISTS (
-                    SELECT 1 FROM present p 
-                    WHERE p.student_id = s.student_id 
-                    AND p.time_in::date = CURRENT_DATE
-                )
-                AND NOT EXISTS (
-                    SELECT 1 FROM absent a
-                    WHERE a.student_id = s.student_id 
-                    AND a.absent_datetime::date = CURRENT_DATE
-                )
+
+            // 4.1 Check Holiday (Global)
+            const isHoliday = await isTodayHoliday(client, now);
+            if (isHoliday) {
+                debugLogWriteToFile(`[AUTO-ABSENT] Skipped. Today is a holiday.`);
+                return 0;
+            }
+
+            // 4.2 Check Weekend (Global Fixed Schedule)
+            // Day: 0 (Sun) - 6 (Sat)
+            const day = now.getDay();
+            const isWeekend = (day === 0 || day === 6);
+
+            let sectionFilter = ``;
+            // If fixed schedule is ON, and it is weekend -> Skip ALL
+            if (fixedSchedule && isWeekend) {
+                debugLogWriteToFile(`[AUTO-ABSENT] Skipped. Weekend (Fixed Schedule).`);
+                return 0;
+            }
+
+            // If fixed schedule is OFF, we need to check section specific schedules
+            // We can't easily filter in one query unless we join sections.
+            // Strategy: Select students to mark, but filter by allowed_days
+
+            const query = `
+                 WITH target_students AS (
+                     SELECT s.student_id, s.classroom_section
+                     FROM students s
+                     WHERE s.status = 'Active'
+                     AND NOT EXISTS (
+                        SELECT 1 FROM present p 
+                        WHERE p.student_id = s.student_id 
+                        AND p.time_in::date = CURRENT_DATE
+                     )
+                     AND NOT EXISTS (
+                        SELECT 1 FROM absent a
+                        WHERE a.student_id = s.student_id 
+                        AND a.absent_datetime::date = CURRENT_DATE
+                     )
+                 )
+                 SELECT ts.student_id, sec.allowed_days
+                 FROM target_students ts
+                 LEFT JOIN sections sec ON ts.classroom_section = sec.section_name
              `;
-             const result = await client.query(query);
-             count = result.rowCount;
-             if (result.rowCount > 0) {
-                 debugLogWriteToFile(`[AUTO-ABSENT] Marked ${result.rowCount} students as absent.`);
-             }
+
+            const candidates = await client.query(query);
+            const studentsToMark = [];
+
+            // Day mapping for allowed_days string (e.g. "Mon,Tue" or "1,2")
+            const daysMap = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const currentDayName = daysMap[day];
+
+            for (const row of candidates.rows) {
+                let shouldMark = true;
+
+                // If using Fixed Schedule = TRUE (and we are here, so it is NOT weekend), allow all (mark absent)
+                // If using Fixed Schedule = FALSE, we MUST check allowed_days.
+                // If allowed_days is empty/null, assuming Default (Mon-Fri) or All Days? 
+                // Let's assume if Fixed=False and allowed_days is NULL, it follows the global rule (which we already passed if not fixed?? No wait).
+
+                // If Fixed=True: We are Mon-Fri. Mark.
+                // If Fixed=False: 
+                //    If allowed_days is set: Check if today is in it.
+                //    If allowed_days is NOT set: Default to Mon-Fri??? Or All days? 
+                //       Let's assume default is Mon-Fri if not specified.
+
+                if (!fixedSchedule) {
+                    if (row.allowed_days) {
+                        // Check match. Supports "Mon, Wed" or "1, 3"
+                        const allowed = row.allowed_days.split(',').map(d => d.trim());
+                        const inListName = allowed.includes(currentDayName);
+                        const inListIndex = allowed.includes(String(day));
+
+                        if (!inListName && !inListIndex) {
+                            shouldMark = false; // Today is NOT allowed for this section
+                        }
+                    } else {
+                        // No specific schedule. Fallback to Mon-Fri (Standard)
+                        if (isWeekend) shouldMark = false;
+                    }
+                } else {
+                    // Fixed Schedule = True.
+                    // We already returned 0 if it was weekend globally.
+                    // So here it is Mon-Fri. Mark.
+                }
+
+                if (shouldMark) {
+                    studentsToMark.push(row.student_id);
+                }
+            }
+
+            if (studentsToMark.length > 0) {
+                // Bulk Insert
+                // Postgres doesn't have a simple array insert without unnest, but we can iterate or build a query.
+                // For safety/speed, let's use UNNEST
+                const insertQuery = `
+                    INSERT INTO absent (student_id, absent_datetime, reason)
+                    SELECT unnest($1::text[]), NOW(), 'Auto-Absent (No Show)'
+                 `;
+
+                const res = await client.query(insertQuery, [studentsToMark]);
+                count = res.rowCount;
+                debugLogWriteToFile(`[AUTO-ABSENT] Marked ${count} students as absent.`);
+            }
         }
     } catch (err) {
         debugLogWriteToFile(`[AUTO-ABSENT] Error: ${err.message}`);
@@ -3198,7 +3342,7 @@ async function checkEventStatus() {
             AND start_datetime <= $1 
             AND end_datetime > $1
         `, [now]);
-        
+
         if (ongoingRes.rowCount > 0) {
             debugLogWriteToFile(`[EVENT WATCHDOG] Set ${ongoingRes.rowCount} events to 'ongoing'.`);
             updates += ongoingRes.rowCount;
@@ -3256,7 +3400,7 @@ app.post('/api/staff/recovery-code', async (req, res) => {
         // Generate 12-char code (XXXX-XXXX-XXXX)
         const code = crypto.randomBytes(6).toString('hex').toUpperCase().match(/.{1,4}/g).join('-');
         const hashedCode = await bcrypt.hash(code, 10);
-        
+
         await client.query('UPDATE staff_login SET recovery_code = $1 WHERE staff_id = $2', [hashedCode, staff_id]);
         res.json({ success: true, code });
     } catch (err) {
@@ -3276,7 +3420,7 @@ app.post('/api/auth/recovery/lookup', async (req, res) => {
     const client = await pool.connect();
     try {
         let staffId = null;
-        
+
         // 1. Check Username (staff_login)
         const resUser = await client.query('SELECT staff_id FROM staff_login WHERE username = $1', [identifier]);
         if (resUser.rows.length > 0) staffId = resUser.rows[0].staff_id;
@@ -3297,9 +3441,9 @@ app.post('/api/auth/recovery/lookup', async (req, res) => {
 
         // Get Recovery Info
         const loginRes = await client.query('SELECT security_question, recovery_code FROM staff_login WHERE staff_id = $1', [staffId]);
-        
+
         if (loginRes.rows.length === 0) {
-             return res.status(404).json({ error: 'Login account not configured.' });
+            return res.status(404).json({ error: 'Login account not configured.' });
         }
 
         const row = loginRes.rows[0];
@@ -3329,13 +3473,13 @@ app.post('/api/auth/recovery/verify-code', async (req, res) => {
     try {
         const res1 = await client.query('SELECT recovery_code FROM staff_login WHERE staff_id = $1', [staff_id]);
         if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-        
+
         const storedHash = res1.rows[0].recovery_code;
         if (!storedHash) return res.status(400).json({ error: 'No recovery code set.' });
 
         const match = await bcrypt.compare(code, storedHash);
         if (!match) return res.status(401).json({ error: 'Invalid recovery code.' });
-        
+
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[RECOVERY] VERIFY CODE ERROR: ${err.message}`);
@@ -3352,7 +3496,7 @@ app.post('/api/auth/recovery/verify-question', async (req, res) => {
     try {
         const res1 = await client.query('SELECT security_answer FROM staff_login WHERE staff_id = $1', [staff_id]);
         if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-        
+
         const storedHash = res1.rows[0].security_answer;
         if (!storedHash) return res.status(400).json({ error: 'No security question set.' });
 
@@ -3376,7 +3520,7 @@ app.post('/api/auth/recovery/reset-via-code', async (req, res) => {
     try {
         const res1 = await client.query('SELECT recovery_code FROM staff_login WHERE staff_id = $1', [staff_id]);
         if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-        
+
         const storedHash = res1.rows[0].recovery_code;
         if (!storedHash) return res.status(400).json({ error: 'No recovery code set.' });
 
@@ -3386,7 +3530,7 @@ app.post('/api/auth/recovery/reset-via-code', async (req, res) => {
         const hashedPassword = await bcrypt.hash(new_password, 10);
         // Invalidate code after use
         await client.query('UPDATE staff_login SET password = $1, recovery_code = NULL WHERE staff_id = $2', [hashedPassword, staff_id]);
-        
+
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[RECOVERY] RESET CODE ERROR: ${err.message}`);
@@ -3403,7 +3547,7 @@ app.post('/api/auth/recovery/reset-via-question', async (req, res) => {
     try {
         const res1 = await client.query('SELECT security_answer FROM staff_login WHERE staff_id = $1', [staff_id]);
         if (res1.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-        
+
         const storedHash = res1.rows[0].security_answer;
         if (!storedHash) return res.status(400).json({ error: 'No security question set.' });
 
@@ -3428,7 +3572,7 @@ app.get('/api/calendar/holidays', async (req, res) => {
     const { year } = req.query;
     const targetYear = parseInt(year) || new Date().getFullYear();
     const client = await pool.connect();
-    
+
     try {
         // 1. Get Config
         await client.query(`
@@ -3442,8 +3586,8 @@ app.get('/api/calendar/holidays', async (req, res) => {
         // Ensure one row exists
         let configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
         if (configRes.rows.length === 0) {
-             await client.query("INSERT INTO calendar_config (country) VALUES ('PH')");
-             configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
+            await client.query("INSERT INTO calendar_config (country) VALUES ('PH')");
+            configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
         }
         const config = configRes.rows[0];
 
@@ -3466,7 +3610,7 @@ app.get('/api/calendar/holidays', async (req, res) => {
                 type TEXT DEFAULT 'event'
             )
         `);
-        
+
         // Filter custom holidays by year (assuming date is YYYY-MM-DD string)
         const customRes = await client.query('SELECT * FROM calendar_custom_holidays WHERE date LIKE $1', [`${targetYear}-%`]);
         const customHolidays = customRes.rows.map(h => ({

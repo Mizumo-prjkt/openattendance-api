@@ -3348,7 +3348,7 @@ app.post('/api/attendance/scan', async (req, res) => {
         if (config.strict_attendance_window) {
             // Determine current time in School's Timezone
             const now = new Date(recordTime || Date.now());
-            const timeZone = CountryTimezones[config.country_code || 'PH'] || 'UTC';
+            const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
             
             // Create Date objects for comparison using the school's local time components
             const schoolTimeStr = now.toLocaleString('en-US', { timeZone });

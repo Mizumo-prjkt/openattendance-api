@@ -292,6 +292,97 @@ async function syncTimeWithNTP(retryCount = 0) {
     }
 }
 
+// [TIME SYSTEM]
+// Centralized time logic helper
+function getSystemTime(config = {}) {
+    const {
+        time_source = 'ntp',
+        fallback_source = 'server',
+        enable_utc_correction = true,
+        country_code = 'PH'
+    } = config;
+
+    let timestamp = Date.now();
+    let source = 'server';
+    let offset = 0;
+
+    // 1. Determine Base Time
+    if (time_source === 'ntp' && globalTimeOffset !== 0) {
+        timestamp += globalTimeOffset;
+        source = 'ntp';
+        offset = globalTimeOffset;
+    } else if (time_source === 'client') {
+        // Client time is handled by frontend, but we return server time keyed as 'client'
+        // so frontend knows to use its own clock.
+        source = 'client';
+    } else {
+        // Fallback or explicit Server
+        if (time_source === 'ntp' && globalTimeOffset === 0) {
+            // NTP failed or not yet synced, use fallback
+            if (fallback_source === 'client') source = 'client';
+            else source = 'server'; // Default fallback
+        } else {
+            source = 'server';
+        }
+    }
+
+    // 2. Apply UTC Correction (Visual Offset)
+    // This doesn't change the timestamp (which should remain UTC/Server time),
+    // but provides an offset for frontend display if the server is in UTC but physically in another country.
+    // For API consistency, we might want to return the *corrected* timestamp as the primary,
+    // or provide a separate 'visual_timestamp'.
+    // User requested "automatically offset it".
+    let visualOffset = 0;
+    if (enable_utc_correction) {
+        visualOffset = calculateUtcOffset(timestamp, country_code);
+    }
+
+    return {
+        timestamp: timestamp, // The actual system time (UTC or Server Local)
+        visualTimestamp: timestamp + visualOffset, // The time to show user
+        source: source,
+        offset: offset,
+        visualOffset: visualOffset,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    };
+}
+
+function calculateUtcOffset(timestamp, countryCode) {
+    try {
+        const targetZone = CountryTimezones[countryCode] || 'UTC';
+        const serverZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+        // If server is already in target zone, no correction needed
+        if (serverZone === targetZone) return 0;
+
+        // Calculate difference
+        // We use the date string to get the offset relative to UTC for both zones
+        const date = new Date(timestamp);
+        const formatOpts = { timeZone: targetZone, timeZoneName: 'shortOffset' };
+        const targetDateStr = new Intl.DateTimeFormat('en-US', formatOpts).format(date);
+
+        // This is a bit complex to do reliably without a library like moment-timezone or luxon.
+        // A simpler approach for "Auto UTC Correction":
+        // If Server is UTC (or close to it) and Target is NOT UTC.
+
+        // Let's use the offset difference in minutes
+        const getOffsetMinutes = (timeZone, date) => {
+            const tzTime = new Date(date.toLocaleString('en-US', { timeZone }));
+            const utcTime = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+            return (tzTime - utcTime) / 60000;
+        };
+
+        const serverOffset = getOffsetMinutes(serverZone, date);
+        const targetOffset = getOffsetMinutes(targetZone, date);
+
+        return (targetOffset - serverOffset) * 60000; // Return in ms
+    } catch (e) {
+        console.warn(`[TIME]: Error calculating UTC offset: ${e.message}`);
+        return 0;
+    }
+}
+
+
 function validateLocalTimeWithCountry(countryCode) {
     try {
         const targetZone = CountryTimezones[countryCode] || 'UTC';
@@ -315,6 +406,103 @@ function validateLocalTimeWithCountry(countryCode) {
         console.error(`[TIME]: Validation Error: ${validationErr.message}`);
     }
 }
+
+// [TIME API ENDPOINTS]
+
+app.get('/api/time/config', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query('SELECT time_source, fallback_source, ntp_server, enable_utc_correction, country_code, auto_time_zone, time_zone_offset FROM configurations LIMIT 1');
+        if (result.rows.length > 0) {
+            res.json(result.rows[0]);
+        } else {
+            res.json({});
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.post('/api/time/config', async (req, res) => {
+    const { time_source, fallback_source, ntp_server, enable_utc_correction, auto_time_zone, manual_offset } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(`
+            UPDATE configurations SET 
+                time_source = COALESCE($1, time_source),
+                fallback_source = COALESCE($2, fallback_source),
+                ntp_server = COALESCE($3, ntp_server),
+                enable_utc_correction = COALESCE($4, enable_utc_correction),
+                auto_time_zone = COALESCE($5, auto_time_zone),
+                time_zone_offset = COALESCE($6, time_zone_offset)
+        `, [time_source, fallback_source, ntp_server, enable_utc_correction, auto_time_zone, manual_offset]);
+        await client.query('COMMIT');
+
+        // Trigger a sync if NTP server changed
+        if (ntp_server) {
+            syncTimeWithNTP();
+        }
+
+        res.json({ success: true });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.post('/api/time/sync', async (req, res) => {
+    // Alias for frontend compatibility /api/ntp/syncnow
+    try {
+        await syncTimeWithNTP();
+        res.json({ success: true, offset: globalTimeOffset });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+// Legacy endpoint support
+app.post('/api/ntp/syncnow', async (req, res) => {
+    try {
+        await syncTimeWithNTP();
+        res.json({ success: true, offset: globalTimeOffset });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.get('/api/time/now', async (req, res) => {
+    // Alias for frontend compatibility /api/system/time
+    const client = await pool.connect();
+    try {
+        const result = await client.query('SELECT * FROM configurations LIMIT 1');
+        const config = result.rows[0] || {};
+        const systemTime = getSystemTime(config);
+        res.json(systemTime);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+// Legacy endpoint support
+app.get('/api/system/time', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const result = await client.query('SELECT * FROM configurations LIMIT 1');
+        const config = result.rows[0] || {};
+        const systemTime = getSystemTime(config);
+        res.json(systemTime);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
 
 // Start the server!
 server.listen(PORT, () => {

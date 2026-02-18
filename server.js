@@ -43,8 +43,6 @@ try {
     console.log("[SMS] Optional dependency @zigasebenik/zte-sms not found.");
 }
 
-const TimeService = require('./timeService');
-
 // Initial
 let debugMode = false;
 let logFilePath;
@@ -319,72 +317,6 @@ function validateLocalTimeWithCountry(countryCode) {
 }
 
 // Start the server!
-// [TIME SERVICE API]
-
-app.get('/api/time/config', async (req, res) => {
-    try {
-        const config = await TimeService.loadConfig(); // Reloads and returns current config from instance
-        res.json(TimeService.config);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.post('/api/time/config', async (req, res) => {
-    if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: "Invalid payload" });
-    try {
-        // Validation could be added here
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            const { time_source, time_zone_offset, auto_time_zone, ntp_server, enable_utc_correction, fallback_source } = req.body;
-
-            // Build update query dynamically or fixed
-            await client.query(
-                `UPDATE configurations SET 
-                    time_source = COALESCE($1, time_source),
-                    time_zone_offset = COALESCE($2, time_zone_offset),
-                    auto_time_zone = COALESCE($3, auto_time_zone),
-                    ntp_server = COALESCE($4, ntp_server),
-                    enable_utc_correction = COALESCE($5, enable_utc_correction),
-                    fallback_source = COALESCE($6, fallback_source)
-                `,
-                [time_source, time_zone_offset, auto_time_zone, ntp_server, enable_utc_correction, fallback_source]
-            );
-            await client.query('COMMIT');
-
-            // Reload service config
-            await TimeService.loadConfig();
-            res.json({ success: true, config: TimeService.config });
-        } catch (dbErr) {
-            await client.query('ROLLBACK');
-            throw dbErr;
-        } finally {
-            client.release();
-        }
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.post('/api/time/sync', async (req, res) => {
-    try {
-        await TimeService.sync();
-        res.json({ success: true, offset: TimeService.offsetMs });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.get('/api/time/now', (req, res) => {
-    try {
-        // Uses debug data for frontend verification
-        res.json(TimeService.getDebugData());
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 server.listen(PORT, () => {
     brkln('nl');
     brkln('el');
@@ -404,10 +336,6 @@ const pool = new Pool({
     password: process.env.DB_PASSWORD || 'password',
     port: process.env.DB_PORT || 5432,
 });
-
-// Initialize TimeService with DB pool
-TimeService.init(pool).catch(err => console.error('[TimeService] Init failed:', err));
-
 
 // Test connection
 pool.connect((err, client, release) => {

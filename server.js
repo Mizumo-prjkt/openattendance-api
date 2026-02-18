@@ -3346,25 +3346,42 @@ app.post('/api/attendance/scan', async (req, res) => {
         const config = configRes.rows[0] || {};
 
         if (config.strict_attendance_window) {
-            // Determine current time in School's Timezone
-            const now = new Date(recordTime || Date.now());
-            const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
-            
-            // Create Date objects for comparison using the school's local time components
-            const schoolTimeStr = now.toLocaleString('en-US', { timeZone });
-            const schoolTime = new Date(schoolTimeStr);
+            try {
+                // Determine current time in School's Timezone using robust Intl formatting
+                const now = new Date(recordTime || Date.now());
+                const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
+                
+                const formatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone,
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    hour12: false
+                });
+                
+                const parts = formatter.formatToParts(now);
+                const currentH = parseInt(parts.find(p => p.type === 'hour').value);
+                const currentM = parseInt(parts.find(p => p.type === 'minute').value);
+                const currentTotalMinutes = (currentH * 60) + currentM;
 
-            const [startH, startM] = (config.time_in_start || '06:00:00').split(':');
-            const [outH, outM] = (config.time_out_target || '16:00:00').split(':');
+                // Parse Configured Times
+                const [startH, startM] = (config.time_in_start || '06:00:00').split(':').map(Number);
+                const [outH, outM] = (config.time_out_target || '16:00:00').split(':').map(Number);
 
-            const startTime = new Date(schoolTime);
-            startTime.setHours(parseInt(startH), parseInt(startM), 0, 0);
+                const startTotalMinutes = (startH * 60) + startM;
+                // End time is Time Out + 2 hours grace period
+                const endTotalMinutes = ((outH + 2) * 60) + outM;
 
-            const endTime = new Date(schoolTime);
-            endTime.setHours(parseInt(outH) + 2, parseInt(outM), 0, 0); // +2 hours grace period
-
-            if (schoolTime < startTime || schoolTime > endTime) {
-                return res.status(403).json({ error: `Attendance is closed. Allowed: ${config.time_in_start} - ${endTime.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false})}` });
+                // Check Window
+                if (currentTotalMinutes < startTotalMinutes || currentTotalMinutes > endTotalMinutes) {
+                    const endH_disp = Math.floor(endTotalMinutes / 60) % 24;
+                    const endM_disp = endTotalMinutes % 60;
+                    const endStr = `${String(endH_disp).padStart(2, '0')}:${String(endM_disp).padStart(2, '0')}`;
+                    return res.status(403).json({ error: `Attendance is closed. Allowed: ${config.time_in_start} - ${endStr}` });
+                }
+            } catch (timeErr) {
+                console.error(`[STRICT-WINDOW] Error calculating time: ${timeErr.message}`);
+                // Fail-closed: If we can't verify time, block access
+                return res.status(403).json({ error: "System time verification failed. Access denied for security." });
             }
         }
 

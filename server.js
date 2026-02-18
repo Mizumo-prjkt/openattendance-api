@@ -790,7 +790,14 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fixed_weekday_schedule BOOLEAN DEFAULT TRUE");
                 await hotfixClient.query("ALTER TABLE sections ADD COLUMN IF NOT EXISTS allowed_days TEXT");
 
-                // 15. Calendar Tables
+                // 15. Time Configuration
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_source TEXT DEFAULT 'ntp'");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fallback_source TEXT DEFAULT 'server'");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS enable_utc_correction BOOLEAN DEFAULT true");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS auto_time_zone BOOLEAN DEFAULT true");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_zone_offset INTEGER DEFAULT 0");
+
+                // 16. Calendar Tables
                 await hotfixClient.query(`
                     CREATE TABLE IF NOT EXISTS calendar_config (
                         id SERIAL PRIMARY KEY,

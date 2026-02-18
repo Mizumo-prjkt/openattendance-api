@@ -3333,9 +3333,10 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
 // [ATTENDANCE-SCAN]
 // Kiosk Scan Endpoint
 app.post('/api/attendance/scan', async (req, res) => {
-    const { qr_code, mode, event_id, location, staff_id, type } = req.body;
+    const { qr_code, mode, event_id, location, staff_id, type, timestamp } = req.body;
     const client = await pool.connect();
     const scanType = type || 'in'; // Default to 'in' if not specified
+    const recordTime = timestamp || null; // Use provided timestamp or fallback to NOW() via COALESCE
 
     try {
         // 1. Identify Student
@@ -3370,15 +3371,15 @@ app.post('/api/attendance/scan', async (req, res) => {
                 }
                 // Otherwise (no record OR previous record has time_out), allow new entry
                 await client.query(
-                    "INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, NOW())",
-                    [event_id, student.student_id, location || 'Kiosk']
+                    "INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, COALESCE($4, NOW()))",
+                    [event_id, student.student_id, location || 'Kiosk', recordTime]
                 );
             } else {
                 // Time Out
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
 
-                await client.query("UPDATE event_attendance SET time_out = NOW() WHERE id = $1", [check.rows[0].id]);
+                await client.query("UPDATE event_attendance SET time_out = COALESCE($2, NOW()) WHERE id = $1", [check.rows[0].id, recordTime]);
             }
         } else {
             // Normal Mode (Daily Attendance)
@@ -3392,14 +3393,14 @@ app.post('/api/attendance/scan', async (req, res) => {
                     return res.status(409).json({ error: 'Already checked in today', student });
                 }
                 await client.query(
-                    "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, NOW(), $2, $3)",
-                    [student.student_id, staff_id || null, location || 'Kiosk']
+                    "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, COALESCE($4, NOW()), $2, $3)",
+                    [student.student_id, staff_id || null, location || 'Kiosk', recordTime]
                 );
             } else {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
 
-                await client.query("UPDATE present SET time_out = NOW() WHERE present_id = $1", [check.rows[0].present_id]);
+                await client.query("UPDATE present SET time_out = COALESCE($2, NOW()) WHERE present_id = $1", [check.rows[0].present_id, recordTime]);
             }
         }
 

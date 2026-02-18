@@ -1769,7 +1769,7 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
         // 3. Get Attendance Records for Date
         // Present
         const presentRes = await client.query(`
-            SELECT student_id, time_in 
+            SELECT student_id, time_in, time_out
             FROM present 
             WHERE time_in::date = $1::date
         `, [date]);
@@ -1783,11 +1783,17 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
             const timeInDate = new Date(p.time_in);
             const timeIn = timeInDate.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' });
 
+            let timeOut = null;
+            if (p.time_out) {
+                const timeOutDate = new Date(p.time_out);
+                timeOut = timeOutDate.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' });
+            }
+
             // Extract time string HH:MM:SS for comparison
             const timePart = timeInDate.toTimeString().split(' ')[0];
             const isLate = timePart > lateThreshold;
 
-            presentMap[p.student_id] = { timeIn, isLate };
+            presentMap[p.student_id] = { timeIn, timeOut, isLate };
         });
 
         // Absent (Manual)
@@ -1805,11 +1811,13 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
         const attendanceData = students.map(s => {
             let status = 'none';
             let timeIn = null;
+            let timeOut = null;
             let remarks = '';
 
             if (presentMap[s.student_id]) {
                 status = presentMap[s.student_id].isLate ? 'late' : 'present';
                 timeIn = presentMap[s.student_id].timeIn;
+                timeOut = presentMap[s.student_id].timeOut;
             } else if (absentMap[s.student_id]) {
                 status = 'absent';
                 remarks = absentMap[s.student_id];
@@ -1822,6 +1830,7 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
                 gender: s.gender,
                 status,
                 time_in: timeIn,
+                time_out: timeOut,
                 remarks
             };
         });

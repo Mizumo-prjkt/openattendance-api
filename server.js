@@ -1590,6 +1590,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
                 s.first_name || ' ' || s.last_name as title,
                 'Checked in at ' || to_char(p.time_in, 'HH12:MI AM') as desc,
                 to_char(p.time_in, 'HH12:MI AM') as time,
+                p.time_in as raw_time,
                 'login' as icon,
                 'text-[#146C2E]' as iconColor,
                 'bg-[#C4EED0]' as bg

@@ -800,6 +800,7 @@ async function checkAndInitDB() {
                 // 14. Holiday & Schedule Configuration
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fixed_weekday_schedule BOOLEAN DEFAULT TRUE");
                 await hotfixClient.query("ALTER TABLE sections ADD COLUMN IF NOT EXISTS allowed_days TEXT");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS strict_attendance_window BOOLEAN DEFAULT FALSE");
 
                 // 15. Time Configuration
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_source TEXT DEFAULT 'ntp'");
@@ -2843,7 +2844,7 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule } = req.body;
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window } = req.body;
 
     const client = await pool.connect();
     try {
@@ -2854,9 +2855,9 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
             // Insert (Only if table is empty)
             const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
             await client.query(
-                `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule)
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-                [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00', fixed_weekday_schedule === 'true']
+                `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00', fixed_weekday_schedule === 'true', strict_attendance_window === 'true']
             );
         } else {
             // Update existing row
@@ -2873,11 +2874,11 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
             ];
 
             if (req.file) {
-                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule) WHERE config_id = $14`;
-                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null);
+                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule), strict_attendance_window = COALESCE($16, strict_attendance_window) WHERE config_id = $14`;
+                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null);
             } else {
-                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule) WHERE config_id = $13`;
-                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null);
+                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule), strict_attendance_window = COALESCE($15, strict_attendance_window) WHERE config_id = $13`;
+                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null);
             }
             await client.query(query, params);
         }
@@ -3340,6 +3341,33 @@ app.post('/api/attendance/scan', async (req, res) => {
     const recordTime = timestamp || null; // Use provided timestamp or fallback to NOW() via COALESCE
 
     try {
+        // 0. Check Strict Attendance Window
+        const configRes = await client.query("SELECT time_in_start, time_out_target, strict_attendance_window, country_code FROM configurations LIMIT 1");
+        const config = configRes.rows[0] || {};
+
+        if (config.strict_attendance_window) {
+            // Determine current time in School's Timezone
+            const now = new Date(recordTime || Date.now());
+            const timeZone = CountryTimezones[config.country_code || 'PH'] || 'UTC';
+            
+            // Create Date objects for comparison using the school's local time components
+            const schoolTimeStr = now.toLocaleString('en-US', { timeZone });
+            const schoolTime = new Date(schoolTimeStr);
+
+            const [startH, startM] = (config.time_in_start || '06:00:00').split(':');
+            const [outH, outM] = (config.time_out_target || '16:00:00').split(':');
+
+            const startTime = new Date(schoolTime);
+            startTime.setHours(parseInt(startH), parseInt(startM), 0, 0);
+
+            const endTime = new Date(schoolTime);
+            endTime.setHours(parseInt(outH) + 2, parseInt(outM), 0, 0); // +2 hours grace period
+
+            if (schoolTime < startTime || schoolTime > endTime) {
+                return res.status(403).json({ error: `Attendance is closed. Allowed: ${config.time_in_start} - ${endTime.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', hour12:false})}` });
+            }
+        }
+
         // 1. Identify Student
         // QR code might be in format <student-id>|<school year> or <hash>|<student-id>|<school year>
         let studentIdToSearch = qr_code;

@@ -53,6 +53,7 @@ ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Mal
 
 -- 3. Update configurations
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_id TEXT;
+ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fixed_weekday_schedule BOOLEAN DEFAULT TRUE;
 
 -- 4. Create sections table
 CREATE TABLE IF NOT EXISTS sections (
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS sections (
     adviser_staff_id TEXT,
     room_number TEXT,
     schedule_data JSONB,
+    allowed_days TEXT, -- Stored as comma-separated days (e.g. "Mon,Wed,Fri") or indexes "1,3,5"
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
@@ -158,7 +160,22 @@ ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '20
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE;
 
 -- 18. Attendance Present and event checks
-ALTEER TABLE present ADD COLUMN IF NOT EXISTS location TEXT
-ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT
+ALTEER TABLE present ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT;
+
+-- 19. Calendar Config and Holidays
+CREATE TABLE IF NOT EXISTS calendar_config (
+    id SERIAL PRIMARY KEY,
+    country TEXT DEFAULT 'PH',
+    state TEXT,
+    region TEXT
+);
+
+CREATE TABLE IF NOT EXISTS calendar_custom_holidays (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    date TEXT NOT NULL,
+    type TEXT DEFAULT 'event'
+);
 
 COMMIT;

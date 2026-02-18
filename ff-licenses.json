@@ -1569,6 +1569,15 @@
     "path": "/home/user/Projects/openattendance/openattendance-frontend/node_modules/nth-check",
     "licenseFile": "/home/user/Projects/openattendance/openattendance-frontend/node_modules/nth-check/LICENSE"
   },
+  "ntp-client@0.5.3": {
+    "licenses": "MIT",
+    "repository": "https://github.com/moonpyk/node-ntp-client",
+    "publisher": "Clément Bourgeois",
+    "email": "moonpyk@gmail.com",
+    "url": "http://www.moonpyk.net",
+    "path": "/home/user/Projects/openattendance/openattendance-frontend/node_modules/ntp-client",
+    "licenseFile": "/home/user/Projects/openattendance/openattendance-frontend/node_modules/ntp-client/LICENSE-MIT"
+  },
   "object-assign@4.1.1": {
     "licenses": "MIT",
     "repository": "https://github.com/sindresorhus/object-assign",

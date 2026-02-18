@@ -35,7 +35,14 @@ CREATE TABLE IF NOT EXISTS configurations (
     created_config_date TEXT, -- Consider changing to TIMESTAMP or DATE if this is not just a label
     principal_name TEXT,
     principal_title TEXT DEFAULT 'School Principal',
-    school_year TEXT DEFAULT '2026-2027'
+    school_year TEXT DEFAULT '2026-2027',
+    fixed_weekday_schedule BOOLEAN DEFAULT TRUE,
+    time_source TEXT DEFAULT 'ntp' CHECK (time_source IN ('ntp', 'server', 'client')),
+    time_zone_offset INTEGER DEFAULT 0,
+    auto_time_zone BOOLEAN DEFAULT TRUE,
+    ntp_server TEXT DEFAULT 'pool.ntp.org',
+    enable_utc_correction BOOLEAN DEFAULT TRUE,
+    fallback_source TEXT DEFAULT 'server' CHECK (fallback_source IN ('server', 'client'))
 );
 
 -- 3. Staff Accounts (Created before others to satisfy FK constraints)

@@ -178,4 +178,28 @@ CREATE TABLE IF NOT EXISTS calendar_custom_holidays (
     type TEXT DEFAULT 'event'
 );
 
+
+-- 20. Add Time Configuration Columns
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='configurations' AND column_name='time_source') THEN
+        ALTER TABLE configurations ADD COLUMN time_source TEXT DEFAULT 'ntp' CHECK (time_source IN ('ntp', 'server', 'client'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='configurations' AND column_name='time_zone_offset') THEN
+        ALTER TABLE configurations ADD COLUMN time_zone_offset INTEGER DEFAULT 0;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='configurations' AND column_name='auto_time_zone') THEN
+        ALTER TABLE configurations ADD COLUMN auto_time_zone BOOLEAN DEFAULT TRUE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='configurations' AND column_name='ntp_server') THEN
+        ALTER TABLE configurations ADD COLUMN ntp_server TEXT DEFAULT 'pool.ntp.org';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='configurations' AND column_name='enable_utc_correction') THEN
+        ALTER TABLE configurations ADD COLUMN enable_utc_correction BOOLEAN DEFAULT TRUE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='configurations' AND column_name='fallback_source') THEN
+        ALTER TABLE configurations ADD COLUMN fallback_source TEXT DEFAULT 'server' CHECK (fallback_source IN ('server', 'client'));
+    END IF;
+END $$;
+
 COMMIT;

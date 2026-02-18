@@ -2274,12 +2274,19 @@ app.get('/api/export/generate', async (req, res) => {
         });
 
         // 4. Generate CSV
+        // Check fixed schedule config
+        const fixedSchedule = config.fixed_weekday_schedule !== false; // Default true
+
         // Get all days in month
         const daysInMonth = [];
         const date = new Date(startOfMonth);
         const lastDate = new Date(endOfMonth);
         while (date <= lastDate) {
-            daysInMonth.push(date.toISOString().split('T')[0]);
+            const dayOfWeek = date.getDay();
+            // If fixed schedule is ON, skip Sat (6) and Sun (0)
+            if (!fixedSchedule || (dayOfWeek !== 0 && dayOfWeek !== 6)) {
+                daysInMonth.push(date.toISOString().split('T')[0]);
+            }
             date.setDate(date.getDate() + 1);
         }
 

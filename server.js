@@ -2208,10 +2208,14 @@ app.get('/api/export/generate', async (req, res) => {
 
     const client = await pool.connect();
     try {
-        // 1. Get Section Details
-        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        // 1. Get Config & Section Details
+        const configRes = await client.query('SELECT school_name, school_id, school_year FROM configurations LIMIT 1');
+        const config = configRes.rows[0] || {};
+
+        const secRes = await client.query('SELECT section_name, grade_level FROM sections WHERE section_id = $1', [section_id]);
         if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
-        const sectionName = secRes.rows[0].section_name;
+        const section = secRes.rows[0];
+        const sectionName = section.section_name;
 
         // 2. Get Students in Section
         const studentsRes = await client.query(`
@@ -2248,7 +2252,12 @@ app.get('/api/export/generate', async (req, res) => {
             date.setDate(date.getDate() + 1);
         }
 
-        let csvContent = `Student ID,Last Name,First Name,Gender,${daysInMonth.join(',')},Total Present\n`;
+        let csvContent = '';
+        csvContent += `School Name:,"${config.school_name || ''}",School ID:,"${config.school_id || ''}"\n`;
+        csvContent += `School Year:,"${config.school_year || ''}",Month:,"${month}"\n`;
+        csvContent += `Grade & Section:,"${section.grade_level ? 'Grade ' + section.grade_level + ' - ' : ''}${sectionName}"\n\n`;
+
+        csvContent += `Student ID,Last Name,First Name,Gender,${daysInMonth.join(',')},Total Present\n`;
 
         students.forEach(student => {
             const row = [

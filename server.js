@@ -303,6 +303,8 @@ function getSystemTime(config = {}) {
     } = config;
 
     let timestamp = Date.now();
+    // Capture NTP time regardless of source config for debugging
+    const rawNtpTime = timestamp + (globalTimeOffset || 0);
     let source = 'server';
     let offset = 0;
 
@@ -343,7 +345,8 @@ function getSystemTime(config = {}) {
         source: source,
         offset: offset,
         visualOffset: visualOffset,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        rawNtpTime: rawNtpTime
     };
 }
 
@@ -512,6 +515,14 @@ server.listen(PORT, () => {
     console.log(`API PORT: ${PORT}`);
     console.log(`For developers, please check the documentation...`);
     brkln('el');
+
+    // [NTP THREAD]
+    // Start the NTP synchronization thread
+    console.log('[NTP]: Starting background synchronization thread...');
+    syncTimeWithNTP(); // Initial sync
+    setInterval(() => {
+        syncTimeWithNTP();
+    }, 3600000); // Sync every 1 hour
     brkln('nl');
 });
 

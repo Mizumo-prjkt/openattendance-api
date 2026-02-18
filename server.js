@@ -1742,6 +1742,100 @@ app.delete('/api/sections/delete', async (req, res) => {
     }
 });
 
+// Get Section Attendance for specific date
+app.get('/api/sections/attendance/:section_id', async (req, res) => {
+    const { section_id } = req.params;
+    const { date } = req.query; // YYYY-MM-DD
+
+    if (!date) return res.status(400).json({ error: 'Date is required' });
+
+    const client = await pool.connect();
+    try {
+        // 1. Get Section Name
+        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
+        const sectionName = secRes.rows[0].section_name;
+
+        // 2. Get All Active Students in Section
+        const studentsRes = await client.query(`
+            SELECT student_id, last_name, first_name, profile_image_path, gender
+            FROM students 
+            WHERE classroom_section = $1 AND status = 'Active'
+            ORDER BY last_name ASC
+        `, [sectionName]);
+
+        const students = studentsRes.rows;
+
+        // 3. Get Attendance Records for Date
+        // Present
+        const presentRes = await client.query(`
+            SELECT student_id, time_in 
+            FROM present 
+            WHERE time_in::date = $1::date
+        `, [date]);
+
+        // Late calculation (reuse existing logic or simplistic)
+        const lateThreshold = '08:00:00';
+
+        const presentMap = {};
+        presentRes.rows.forEach(p => {
+            if (!p.time_in) return;
+            const timeInDate = new Date(p.time_in);
+            const timeIn = timeInDate.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' });
+
+            // Extract time string HH:MM:SS for comparison
+            const timePart = timeInDate.toTimeString().split(' ')[0];
+            const isLate = timePart > lateThreshold;
+
+            presentMap[p.student_id] = { timeIn, isLate };
+        });
+
+        // Absent (Manual)
+        const absentRes = await client.query(`
+            SELECT student_id, reason 
+            FROM absent 
+            WHERE absent_datetime::date = $1::date
+        `, [date]);
+        const absentMap = {};
+        absentRes.rows.forEach(a => {
+            absentMap[a.student_id] = a.reason;
+        });
+
+        // 4. Combine Data
+        const attendanceData = students.map(s => {
+            let status = 'none';
+            let timeIn = null;
+            let remarks = '';
+
+            if (presentMap[s.student_id]) {
+                status = presentMap[s.student_id].isLate ? 'late' : 'present';
+                timeIn = presentMap[s.student_id].timeIn;
+            } else if (absentMap[s.student_id]) {
+                status = 'absent';
+                remarks = absentMap[s.student_id];
+            }
+
+            return {
+                id: s.student_id,
+                name: `${s.last_name}, ${s.first_name}`,
+                profile_image: s.profile_image_path,
+                gender: s.gender,
+                status,
+                time_in: timeIn,
+                remarks
+            };
+        });
+
+        res.json(attendanceData);
+
+    } catch (err) {
+        debugLogWriteToFile(`[SECTIONS] ATTENDANCE ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
 
 // [STAFF]
 // Get all staff

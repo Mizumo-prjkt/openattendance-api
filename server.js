@@ -3098,13 +3098,11 @@ app.post('/api/sms/send', async (req, res) => {
         const settings = settingsRes.rows[0];
 
         if (settings && settings.sms_enabled) {
-            if (settings.provider_type === 'zte') {
-                if (!ZteModem) throw new Error("ZTE-SMS library is not installed on the server.");
-                const myModem = new ZteModem({
-                    modemIP: settings.modem_ip || '192.168.0.1',
-                    modemPassword: settings.modem_password
-                });
-                await myModem.sendSms(recipient_number, message_body);
+            if (settings.provider_type === 'huawei') {
+                const connection = await getHuaweiConnection(client);
+                await connection.ready;
+                const sms = new huaweiLteApi.Sms(connection);
+                await sms.sendSms([recipient_number], message_body);
             }
         }
 

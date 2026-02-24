@@ -3049,10 +3049,29 @@ app.post('/api/sms/settings', async (req, res) => {
     const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password } = req.body;
     const client = await pool.connect();
     try {
-        await client.query(`
-            INSERT INTO sms_provider_settings (provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password]);
+        // [HOTFIX] Drop constraint preventing new provider types (like 'huawei')
+        await client.query(`ALTER TABLE sms_provider_settings DROP CONSTRAINT IF EXISTS sms_provider_settings_provider_type_check`);
+
+        // Check if settings exist
+        const checkRes = await client.query('SELECT id FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
+        
+        // Fix for "null value in column provider_name violates not-null constraint"
+        const provider_name = provider_type || 'Generic';
+
+        if (checkRes.rows.length > 0) {
+            const id = checkRes.rows[0].id;
+            await client.query(`
+                UPDATE sms_provider_settings 
+                SET provider_type=$1, sms_enabled=$2, api_url=$3, api_key=$4, tty_path=$5, baud_rate=$6, message_template=$7, curl_config_json=$8, modem_ip=$9, modem_password=$10, provider_name=$11, updated_at=CURRENT_TIMESTAMP
+                WHERE id=$12
+            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, id]);
+        } else {
+            // Insert new with explicit ID 1 to bypass sequence issues
+            await client.query(`
+                INSERT INTO sms_provider_settings (id, provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name)
+                VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name]);
+        }
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SMS] SAVE SETTINGS ERROR: ${err.message}`);
@@ -3184,10 +3203,18 @@ app.post('/api/router/settings', async (req, res) => {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-        await client.query(`
-            INSERT INTO router_settings (router_url, username, password)
-            VALUES ($1, $2, $3)
-        `, [router_url, username, password]);
+        
+        const checkRes = await client.query('SELECT id FROM router_settings ORDER BY id DESC LIMIT 1');
+        if (checkRes.rows.length > 0) {
+            await client.query(`
+                UPDATE router_settings SET router_url=$1, username=$2, password=$3, updated_at=CURRENT_TIMESTAMP WHERE id=$4
+            `, [router_url, username, password, checkRes.rows[0].id]);
+        } else {
+            await client.query(`
+                INSERT INTO router_settings (id, router_url, username, password)
+                VALUES (1, $1, $2, $3)
+            `, [router_url, username, password]);
+        }
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[ROUTER] SAVE SETTINGS ERROR: ${err.message}`);

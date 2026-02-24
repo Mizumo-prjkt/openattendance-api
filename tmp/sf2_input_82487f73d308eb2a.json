@@ -1,0 +1,86 @@
+{
+  "school_info": {
+    "name": "Buloron National High School",
+    "id": "303952",
+    "year": "2025-2026",
+    "month": "February",
+    "grade": 10,
+    "section": "Agimat"
+  },
+  "students": [
+    {
+      "name": "Lagabas, Katapan",
+      "gender": "F",
+      "attendance": {
+        "2026-02-03": "ABSENT",
+        "2026-02-04": "ABSENT",
+        "2026-02-05": "ABSENT",
+        "2026-02-06": "ABSENT",
+        "2026-02-09": "ABSENT",
+        "2026-02-10": "ABSENT",
+        "2026-02-11": "ABSENT",
+        "2026-02-12": "ABSENT",
+        "2026-02-13": "ABSENT",
+        "2026-02-16": "ABSENT",
+        "2026-02-18": "ABSENT",
+        "2026-02-19": "ABSENT",
+        "2026-02-20": "ABSENT",
+        "2026-02-23": "ABSENT",
+        "2026-02-24": "ABSENT",
+        "2026-02-26": "ABSENT",
+        "2026-02-27": "ABSENT"
+      }
+    },
+    {
+      "name": "Laguiba, Alice Smith",
+      "gender": "F",
+      "attendance": {
+        "2026-02-03": "ABSENT",
+        "2026-02-04": "ABSENT",
+        "2026-02-05": "ABSENT",
+        "2026-02-06": "ABSENT",
+        "2026-02-09": "ABSENT",
+        "2026-02-10": "ABSENT",
+        "2026-02-11": "ABSENT",
+        "2026-02-12": "ABSENT",
+        "2026-02-13": "ABSENT",
+        "2026-02-16": "ABSENT",
+        "2026-02-18": "ABSENT",
+        "2026-02-19": "ABSENT",
+        "2026-02-20": "ABSENT",
+        "2026-02-23": "ABSENT",
+        "2026-02-24": "ABSENT",
+        "2026-02-26": "ABSENT",
+        "2026-02-27": "ABSENT"
+      }
+    },
+    {
+      "name": "Lagabas, Mark",
+      "gender": "M",
+      "attendance": {
+        "2026-02-03": "ABSENT",
+        "2026-02-04": "ABSENT",
+        "2026-02-05": "ABSENT",
+        "2026-02-06": "ABSENT",
+        "2026-02-09": "ABSENT",
+        "2026-02-10": "ABSENT",
+        "2026-02-11": "ABSENT",
+        "2026-02-12": "ABSENT",
+        "2026-02-13": "ABSENT",
+        "2026-02-16": "ABSENT",
+        "2026-02-18": "ABSENT",
+        "2026-02-19": "ABSENT",
+        "2026-02-20": "ABSENT",
+        "2026-02-23": "ABSENT",
+        "2026-02-24": "ABSENT",
+        "2026-02-26": "ABSENT",
+        "2026-02-27": "ABSENT"
+      }
+    }
+  ],
+  "holidays": [
+    "2026-02-02",
+    "2026-02-17",
+    "2026-02-25"
+  ]
+}

@@ -31,13 +31,15 @@ const e = require('express');
 const { DESTRUCTION } = require('dns');
 const os = require('os');
 const checkDiskSpace = require('check-disk-space').default;
-const http = require('http');
+const https = require('https');
 const { Server } = require('socket.io');
 const multer = require('multer'); // Added missing requirement based on code usage
 const QRCode = require('qrcode');
 const archiver = require('archiver');
 const NTP = require('ntp-time');
 const Holidays = require('date-holidays');
+const selfsigned = require('selfsigned');
+const forge = require('node-forge');
 let ZteModem;
 try {
     ZteModem = require('@zigasebenik/zte-sms');
@@ -59,8 +61,7 @@ app.use(bodyParser.urlencoded({
 
 
 // Initialize Socket.io
-const server = http.createServer(app);
-const io = new Server(server, {
+const io = new Server({
     cors: {
         origin: "*",
         methods: ["GET", "POST"]
@@ -137,6 +138,30 @@ function debugLogWriteToFile(message) {
     const dateToday = dayToday.toLocaleDateString().replace(/\//g, '-');
     const logEntry = `[${dateToday} ${timeToday}] ${message}\n`;
     fs.appendFileSync(logFilePath, logEntry);
+}
+
+/**
+ * Prints Break Lines for casual readability
+ * @param {string} type of the breakline feature
+ * - nl: uses \n (New Line)
+ * - dl: uses ------ (Dashed Line)
+ * - el: uses ====== (Equal Line)
+ * @returns {void} Prints the break to console
+ */
+function brkln(type) {
+    switch (type) {
+        case 'nl':
+            console.log('\n');
+            break;
+        case 'dl':
+            console.log('--------------------------');
+            break;
+        case 'el':
+            console.log('==========================');
+            break;
+        default:
+            console.log('\n');
+    }
 }
 
 // Override console.log to also write to log file in debug mode
@@ -412,6 +437,119 @@ function validateLocalTimeWithCountry(countryCode) {
     }
 }
 
+// New endpoint for downloading the CA certificate
+app.get('/api/system/ca-cert', (req, res) => {
+    const certPath = path.join(__dirname, 'certs', 'server.cert');
+    if (fs.existsSync(certPath)) {
+        res.download(certPath, 'OpenAttendance-CA.crt', (err) => {
+            if (err) {
+                console.error(`[HTTPS] CA Cert download error: ${err.message}`);
+                if (!res.headersSent) {
+                    res.status(500).json({ error: "Failed to download certificate." });
+                }
+            }
+        });
+    } else {
+        res.status(404).json({ error: "Certificate not found. It may not have been generated yet." });
+    }
+});
+
+async function startServer() {
+    const certsDir = path.join(__dirname, 'certs');
+    const keyPath = path.join(certsDir, 'server.key');
+    const certPath = path.join(certsDir, 'server.cert');
+
+    if (!fs.existsSync(certsDir)) {
+        fs.mkdirSync(certsDir, { recursive: true });
+    }
+
+    let certExists = fs.existsSync(keyPath) && fs.existsSync(certPath);
+
+    if (certExists) {
+        try {
+            const certContent = fs.readFileSync(certPath, 'utf8');
+            const pki = forge.pki;
+            const cert = pki.certificateFromPem(certContent);
+            const expires = cert.validity.notAfter;
+            const daysUntilExpiry = (expires.getTime() - Date.now()) / (1000 * 3600 * 24);
+
+            if (daysUntilExpiry < 30) {
+                console.log(`[HTTPS] Certificate is expiring in ${Math.floor(daysUntilExpiry)} days. Regenerating...`);
+                certExists = false;
+            } else {
+                console.log(`[HTTPS] Certificate found, valid for ${Math.floor(daysUntilExpiry)} more days.`);
+            }
+        } catch (e) {
+            console.error(`[HTTPS] Error parsing existing certificate, will regenerate. Error: ${e.message}`);
+            certExists = false;
+        }
+    }
+
+    if (!certExists) {
+        try {
+            console.log('[HTTPS] Generating new self-signed certificate...');
+
+            const nets = os.networkInterfaces();
+            const ips = [];
+            const dnsNames = ['localhost'];
+            for (const name of Object.keys(nets)) {
+                for (const net of nets[name]) {
+                    if (net.family === 'IPv4' && !net.internal) {
+                        ips.push(net.address);
+                    }
+                }
+            }
+
+            const altNames = [
+                ...dnsNames.map(name => ({ type: 2, value: name })),
+                ...ips.map(ip => ({ type: 7, ip: ip }))
+            ];
+
+            console.log(`[HTTPS] Certificate will be valid for: ${[...dnsNames, ...ips].join(', ')}`);
+
+            const attrs = [{ name: 'commonName', value: 'OpenAttendance-SelfSigned' }];
+            const pems = await selfsigned.generate(attrs, {
+                days: 365,
+                algorithm: 'sha256',
+                keySize: 2048,
+                extensions: [{ name: 'subjectAltName', altNames: altNames }]
+            });
+
+            fs.writeFileSync(keyPath, pems.private);
+            fs.writeFileSync(certPath, pems.cert);
+            console.log('[HTTPS] New certificate generated and saved.');
+        } catch (genErr) {
+            console.error(`[HTTPS] FATAL: Certificate generation failed. The server cannot start.`);
+            console.error(`[HTTPS] Error Details: ${genErr.message}`);
+            console.error(genErr.stack);
+            debugLogWriteToFile(`[HTTPS] FATAL: Certificate generation failed: ${genErr.message}\n${genErr.stack}`);
+            process.exit(1); // Exit explicitly on failure
+        }
+    }
+
+    const httpsOptions = { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+    const server = https.createServer(httpsOptions, app);
+    io.attach(server);
+
+    server.listen(PORT, () => {
+        brkln('nl');
+        brkln('el');
+        console.log('OpenAttendance API is running on HTTPS...');
+        console.log(`API PORT: ${PORT}`);
+        console.log(`For developers, please check the documentation...`);
+        brkln('el');
+
+        console.log('[HTTPS] To enable camera access, client devices must trust the generated CA certificate.');
+        console.log('[HTTPS] Download it from the Settings > Developer page in the frontend.');
+        brkln('nl');
+
+        console.log('[NTP]: Starting background synchronization thread...');
+        syncTimeWithNTP();
+        setInterval(() => syncTimeWithNTP(), 3600000);
+        brkln('nl');
+    });
+}
+
 // [TIME API ENDPOINTS]
 
 app.get('/api/time/config', async (req, res) => {
@@ -509,49 +647,35 @@ app.get('/api/system/time', async (req, res) => {
     }
 });
 
-// Start the server!
-server.listen(PORT, () => {
-    brkln('nl');
-    brkln('el');
-    console.log('OpenAttendance API is running...');
-    console.log(`API PORT: ${PORT}`);
-    console.log(`For developers, please check the documentation...`);
-    brkln('el');
+// // Set the PostgreSQL DB
+// // Configuration should ideally come from environment variables
+// const pool = new Pool({
+//     user: process.env.DB_USER || 'postgres',
+//     host: process.env.DB_HOST || 'localhost',
+//     database: process.env.DB_NAME || 'openattendance',
+//     password: process.env.DB_PASSWORD || 'password',
+//     port: process.env.DB_PORT || 5432,
+// });
 
-    // [NTP THREAD]
-    // Start the NTP synchronization thread
-    console.log('[NTP]: Starting background synchronization thread...');
-    syncTimeWithNTP(); // Initial sync
-    setInterval(() => {
-        syncTimeWithNTP();
-    }, 3600000); // Sync every 1 hour
-    brkln('nl');
-});
+// // Test connection
+// pool.connect((err, client, release) => {
+//     if (err) {
+//         console.error(`Error connecting to the PostgreSQL database: ${err.message}`);
+//         debugLogWriteToFile(`[POSTGRES]: Error connecting to database: ${err.message}`);
+//         return;
+//     }
+//     release();
+//     console.log(`Successfully connected to PostgreSQL`);
+//     debugLogWriteToFile(`[POSTGRES]: Successfully connected to database.`);
 
-// Set the PostgreSQL DB
-// Configuration should ideally come from environment variables
-const pool = new Pool({
-    user: process.env.DB_USER || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'openattendance',
-    password: process.env.DB_PASSWORD || 'password',
-    port: process.env.DB_PORT || 5432,
-});
-
-// Test connection
-pool.connect((err, client, release) => {
-    if (err) {
-        console.error(`Error connecting to the PostgreSQL database: ${err.message}`);
-        debugLogWriteToFile(`[POSTGRES]: Error connecting to database: ${err.message}`);
-        return;
-    }
-    release();
-    console.log(`Successfully connected to PostgreSQL`);
-    debugLogWriteToFile(`[POSTGRES]: Successfully connected to database.`);
-
-    // Check if tables exist, if not, run schema
-    checkAndInitDB();
-});
+//     // Check if tables exist, if not, run schema
+//     checkAndInitDB().then(() => {
+//         startServer();
+//     }).catch(e => {
+//         console.error("Failed to initialize database and start server:", e);
+//         process.exit(1);
+//     });
+// });
 
 // Helper: Compare SemVer-like versions
 function compareVersions(v1, v2) {
@@ -821,7 +945,10 @@ async function checkAndInitDB() {
                     )
                 `);
 
-                                
+                // 17. HTTPS Cert Expiry
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS cert_expiry_date TIMESTAMP");
+
+
                 // 17. Feature Toggles
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_event_based BOOLEAN DEFAULT TRUE");
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_id_generation BOOLEAN DEFAULT TRUE");
@@ -855,29 +982,6 @@ async function checkAndInitDB() {
     } catch (err) {
         console.error(`Error checking/initializing DB: ${err.message}`);
         debugLogWriteToFile(`[POSTGRES]: Error checking/initializing DB: ${err.message}`);
-    }
-}
-
-
-// Function
-/*
- * Prints Break Lines for casual readability
- * @param {string} type of the breakline feature
- * - nl: uses \n (New Line)
- * - dl: uses ------ (Dashed Line)
- * - el: uses ====== (Equal Line)
- * @returns {void} Prints the break to console
- */
-function brkln(type) {
-    switch (type) {
-        case 'nl':
-            return console.log('\n');
-        case 'dl':
-            return console.log('--------------------------');
-        case 'el':
-            return console.log('==========================');
-        default:
-            return console.log('\n');
     }
 }
 
@@ -2656,7 +2760,7 @@ app.get('/api/export/generate', async (req, res) => {
         if (format === 'json' || format === 'sf2') {
             // Fetch Holidays for the month
             const year = new Date(startOfMonth).getFullYear();
-            
+
             // Public Holidays
             const configCalRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
             const calConfig = configCalRes.rows[0] || { country: 'PH' };
@@ -2668,7 +2772,7 @@ app.get('/api/export/generate', async (req, res) => {
             // Custom Holidays
             const customHolidaysRes = await client.query('SELECT date FROM calendar_custom_holidays WHERE date LIKE $1', [`${month}-%`]);
             const customHolidays = customHolidaysRes.rows.map(r => r.date);
-            
+
             const allHolidays = [...new Set([...publicHolidays, ...customHolidays])].sort();
 
             // Late Threshold
@@ -2686,14 +2790,14 @@ app.get('/api/export/generate', async (req, res) => {
                 },
                 students: students.map(student => {
                     const attendanceObj = {};
-                    
+
                     daysInMonth.forEach(day => {
                         // Skip holidays in attendance map? The prompt implies holidays are separate.
                         // But we need to mark attendance for school days.
                         if (allHolidays.includes(day)) return;
 
                         const record = attendanceMap[student.student_id] ? attendanceMap[student.student_id][day] : null;
-                        
+
                         if (record) {
                             // Check Late
                             const timeStr = new Date(record).toTimeString().split(' ')[0];
@@ -2771,11 +2875,11 @@ app.get('/api/export/generate', async (req, res) => {
                     } else {
                         throw new Error(`SF2 generation failed. Could not find the generated .xlsx file in the script's output directory.`);
                     }
-                    
+
                     // 5. Send file
                     const fileBuffer = fs.readFileSync(generatedFilePath);
                     const outputFileName = `SF2_Report_${sectionName}_${month}.xlsx`;
-                    
+
                     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
                     res.setHeader('Content-Disposition', `attachment; filename="${outputFileName}"`);
                     res.send(fileBuffer);
@@ -3545,14 +3649,14 @@ app.post('/api/attendance/scan', async (req, res) => {
                 // Determine current time in School's Timezone using robust Intl formatting
                 const now = new Date(recordTime || Date.now());
                 const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
-                
+
                 const formatter = new Intl.DateTimeFormat('en-US', {
                     timeZone,
                     hour: 'numeric',
                     minute: 'numeric',
                     hour12: false
                 });
-                
+
                 const parts = formatter.formatToParts(now);
                 const currentH = parseInt(parts.find(p => p.type === 'hour').value);
                 const currentM = parseInt(parts.find(p => p.type === 'minute').value);
@@ -4236,4 +4340,34 @@ app.post('/api/calendar/config', async (req, res) => {
         await client.query('UPDATE calendar_config SET country = $1, state = $2, region = $3', [country, state, region]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); } finally { client.release(); }
+});
+
+// Set the PostgreSQL DB
+// Configuration should ideally come from environment variables
+const pool = new Pool({
+    user: process.env.DB_USER || 'postgres',
+    host: process.env.DB_HOST || 'localhost',
+    database: process.env.DB_NAME || 'openattendance',
+    password: process.env.DB_PASSWORD || 'password',
+    port: process.env.DB_PORT || 5432,
+});
+
+// Test connection and start the server
+pool.connect((err, client, release) => {
+    if (err) {
+        console.error(`Error connecting to the PostgreSQL database: ${err.message}`);
+        debugLogWriteToFile(`[POSTGRES]: Error connecting to database: ${err.message}`);
+        process.exit(1);
+    }
+    release();
+    console.log(`Successfully connected to PostgreSQL`);
+    debugLogWriteToFile(`[POSTGRES]: Successfully connected to database.`);
+
+    // Check if tables exist, if not, run schema, then start the server
+    checkAndInitDB().then(() => {
+        startServer();
+    }).catch(e => {
+        console.error("Failed to initialize database and start server:", e);
+        process.exit(1);
+    });
 });

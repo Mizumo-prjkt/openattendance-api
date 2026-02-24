@@ -103,13 +103,31 @@ if (!fs.existsSync(studentImageUploadDir)) {
     fs.mkdirSync(studentImageUploadDir, { recursive: true });
 }
 
-// Serve static assets for profile pictures and logos
-// For profile images, school logos etc. stored in runtime
-app.use('/assets/images', express.static(path.join(__dirname, 'runtime/shared/images')));
-// For setup-specific logos (from initial setup)
-app.use('/assets/images/logos', express.static(path.join(__dirname, 'setup/assets/images/logos')));
+// [ASSETS]
+// Manual route handler for static images to fix 500 errors and improve debugging
+app.get('/assets/images/:category/:filename', (req, res) => {
+    const { category, filename } = req.params;
+    // Security: Prevent directory traversal
+    const safeCategory = path.basename(category);
+    const safeFilename = path.basename(filename);
 
+    const pathsToCheck = [
+        path.join(__dirname, 'runtime/shared/images', safeCategory, safeFilename),
+        safeCategory === 'logos' ? path.join(__dirname, 'setup/assets/images/logos', safeFilename) : null
+    ].filter(Boolean);
 
+    for (const p of pathsToCheck) {
+        if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+            return res.sendFile(p, (err) => {
+                if (err && !res.headersSent) {
+                    console.error(`[ASSETS] SendFile Error (${p}): ${err.message}`);
+                    res.status(500).send('Image Load Error');
+                }
+            });
+        }
+    }
+    res.status(404).send('Image Not Found');
+});
 
 // DebugWriteToFile function
 // From @MizProject/Mitra setup.js
@@ -4363,6 +4381,13 @@ app.post('/api/calendar/config', async (req, res) => {
         await client.query('UPDATE calendar_config SET country = $1, state = $2, region = $3', [country, state, region]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); } finally { client.release(); }
+});
+
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error(`[SERVER ERROR] Uncaught Exception: ${err.message}`);
+    console.error(err.stack);
+    if (!res.headersSent) res.status(500).json({ error: 'Internal Server Error', details: err.message });
 });
 
 // Set the PostgreSQL DB

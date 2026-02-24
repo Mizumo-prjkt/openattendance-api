@@ -43,6 +43,9 @@ try {
     console.log("[SMS] Optional dependency @zigasebenik/zte-sms not found.");
 }
 
+// Configuration
+const SF2_SERVICE_URL = process.env.SF2_SERVICE_URL || 'http://127.0.0.1:5000/gen-sf2';
+
 // Initial
 let debugMode = false;
 let logFilePath;
@@ -2609,7 +2612,7 @@ app.get('/api/export/generate', async (req, res) => {
             date.setDate(date.getDate() + 1);
         }
 
-        if (format === 'json') {
+        if (format === 'json' || format === 'sf2') {
             // Fetch Holidays for the month
             const year = new Date(startOfMonth).getFullYear();
             
@@ -2673,9 +2676,38 @@ app.get('/api/export/generate', async (req, res) => {
                 holidays: allHolidays
             };
 
-            res.setHeader('Content-Type', 'application/json');
-            res.setHeader('Content-Disposition', `attachment; filename="Attendance_${sectionName}_${month}.json"`);
-            res.send(JSON.stringify(jsonOutput, null, 4));
+            if (format === 'json') {
+                res.setHeader('Content-Type', 'application/json');
+                res.setHeader('Content-Disposition', `attachment; filename="Attendance_${sectionName}_${month}.json"`);
+                res.send(JSON.stringify(jsonOutput, null, 4));
+            } else {
+                // SF2 Generation via Python Service
+                try {
+                    const sf2Response = await fetch(SF2_SERVICE_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(jsonOutput)
+                    });
+
+                    if (!sf2Response.ok) {
+                        throw new Error(`Service responded with ${sf2Response.status} ${sf2Response.statusText}`);
+                    }
+
+                    const arrayBuffer = await sf2Response.arrayBuffer();
+                    const buffer = Buffer.from(arrayBuffer);
+
+                    res.setHeader('Content-Type', 'application/zip');
+                    res.setHeader('Content-Disposition', `attachment; filename="SF2_Report_${sectionName}_${month}.zip"`);
+                    res.send(buffer);
+                } catch (serviceErr) {
+                    console.error(`[EXPORT] SF2 Service Error: ${serviceErr.message}`);
+                    debugLogWriteToFile(`[EXPORT] SF2 Service Error: ${serviceErr.message}`);
+                    res.status(502).json({ 
+                        error: "SF2 Generation Service Unavailable. Please ensure the Python server is running.", 
+                        details: serviceErr.message 
+                    });
+                }
+            }
 
         } else {
             // CSV Fallback (Legacy)

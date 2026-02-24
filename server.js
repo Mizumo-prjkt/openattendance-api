@@ -2707,9 +2707,17 @@ app.get('/api/export/generate', async (req, res) => {
                     res.send(buffer);
                 } catch (serviceErr) {
                     console.error(`[EXPORT] SF2 Service Error (${SF2_SERVICE_URL}): ${serviceErr.message}`);
+                    if (serviceErr.cause) {
+                        console.error(`[EXPORT] Underlying Error Cause:`, serviceErr.cause);
+                    }
                     debugLogWriteToFile(`[EXPORT] SF2 Service Error: ${serviceErr.message}`);
                     
                     let details = serviceErr.message;
+                    if (serviceErr.cause) {
+                        const causeMsg = serviceErr.cause.message || serviceErr.cause.code || String(serviceErr.cause);
+                        details = `${serviceErr.message} -> ${causeMsg}`;
+                    }
+
                     if ((serviceErr.cause && serviceErr.cause.code === 'ECONNREFUSED') || serviceErr.message.includes('ECONNREFUSED')) {
                         details = `Connection refused to ${SF2_SERVICE_URL}. Is the Python server running?`;
                     }

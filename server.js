@@ -2580,15 +2580,16 @@ app.get('/api/export/generate', async (req, res) => {
         const endOfMonth = new Date(new Date(month).getFullYear(), new Date(month).getMonth() + 1, 0).toISOString().split('T')[0];
 
         const attendanceRes = await client.query(`
-            SELECT student_id, to_char(time_in, 'YYYY-MM-DD') as date
+            SELECT student_id, to_char(time_in, 'YYYY-MM-DD') as date, time_in
             FROM present 
             WHERE time_in >= $1::date AND time_in <= $2::date
         `, [startOfMonth, endOfMonth]);
 
         const attendanceMap = {};
         attendanceRes.rows.forEach(row => {
-            if (!attendanceMap[row.student_id]) attendanceMap[row.student_id] = new Set();
-            attendanceMap[row.student_id].add(row.date);
+            if (!attendanceMap[row.student_id]) attendanceMap[row.student_id] = {};
+            // Store full time_in to check for lateness
+            attendanceMap[row.student_id][row.date] = row.time_in;
         });
 
         // 4. Generate CSV
@@ -2608,40 +2609,98 @@ app.get('/api/export/generate', async (req, res) => {
             date.setDate(date.getDate() + 1);
         }
 
-        let csvContent = '';
-        csvContent += `School Name:,"${config.school_name || ''}",School ID:,"${config.school_id || ''}"\n`;
-        csvContent += `School Year:,"${config.school_year || ''}",Month:,"${month}"\n`;
-        csvContent += `Grade & Section:,"${section.grade_level ? 'Grade ' + section.grade_level + ' - ' : ''}${sectionName}"\n\n`;
+        if (format === 'json') {
+            // Fetch Holidays for the month
+            const year = new Date(startOfMonth).getFullYear();
+            
+            // Public Holidays
+            const configCalRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
+            const calConfig = configCalRes.rows[0] || { country: 'PH' };
+            const hd = new Holidays(calConfig.country, calConfig.state, calConfig.region);
+            const publicHolidays = hd.getHolidays(year)
+                .filter(h => h.date.startsWith(month))
+                .map(h => h.date.split(' ')[0]);
 
-        csvContent += `Student ID,Last Name,First Name,Gender,${daysInMonth.join(',')},Total Present\n`;
+            // Custom Holidays
+            const customHolidaysRes = await client.query('SELECT date FROM calendar_custom_holidays WHERE date LIKE $1', [`${month}-%`]);
+            const customHolidays = customHolidaysRes.rows.map(r => r.date);
+            
+            const allHolidays = [...new Set([...publicHolidays, ...customHolidays])].sort();
 
-        students.forEach(student => {
-            const row = [
-                student.student_id,
-                `"${student.last_name}"`,
-                `"${student.first_name}"`,
-                student.gender
-            ];
+            // Late Threshold
+            const configTimeRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
+            const lateThreshold = configTimeRes.rows[0]?.time_late_threshold || '08:00:00';
 
-            let presentCount = 0;
-            daysInMonth.forEach(day => {
-                if (attendanceMap[student.student_id] && attendanceMap[student.student_id].has(day)) {
-                    row.push('P');
-                    presentCount++;
-                } else {
-                    row.push('A');
-                }
+            const jsonOutput = {
+                school_info: {
+                    name: config.school_name || "School Name",
+                    id: config.school_id || "000000",
+                    year: config.school_year || year.toString(),
+                    month: new Date(startOfMonth).toLocaleString('default', { month: 'long' }),
+                    grade: section.grade_level || "N/A",
+                    section: sectionName
+                },
+                students: students.map(student => {
+                    const attendanceObj = {};
+                    
+                    daysInMonth.forEach(day => {
+                        // Skip holidays in attendance map? The prompt implies holidays are separate.
+                        // But we need to mark attendance for school days.
+                        if (allHolidays.includes(day)) return;
+
+                        const record = attendanceMap[student.student_id] ? attendanceMap[student.student_id][day] : null;
+                        
+                        if (record) {
+                            // Check Late
+                            const timeStr = new Date(record).toTimeString().split(' ')[0];
+                            if (timeStr > lateThreshold) {
+                                // Late -> Flag as ABSENT per request
+                                attendanceObj[day] = "ABSENT";
+                            } else {
+                                attendanceObj[day] = "PRESENT";
+                            }
+                        } else {
+                            attendanceObj[day] = "ABSENT";
+                        }
+                    });
+
+                    return {
+                        name: `${student.last_name}, ${student.first_name}`,
+                        gender: student.gender === 'Male' ? 'M' : (student.gender === 'Female' ? 'F' : 'O'),
+                        attendance: attendanceObj
+                    };
+                }),
+                holidays: allHolidays
+            };
+
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Disposition', `attachment; filename="Attendance_${sectionName}_${month}.json"`);
+            res.send(JSON.stringify(jsonOutput, null, 4));
+
+        } else {
+            // CSV Fallback (Legacy)
+            let csvContent = '';
+            csvContent += `School Name:,"${config.school_name || ''}",School ID:,"${config.school_id || ''}"\n`;
+            csvContent += `School Year:,"${config.school_year || ''}",Month:,"${month}"\n`;
+            csvContent += `Grade & Section:,"${section.grade_level ? 'Grade ' + section.grade_level + ' - ' : ''}${sectionName}"\n\n`;
+            csvContent += `Student ID,Last Name,First Name,Gender,${daysInMonth.join(',')},Total Present\n`;
+
+            students.forEach(student => {
+                const row = [student.student_id, `"${student.last_name}"`, `"${student.first_name}"`, student.gender];
+                let presentCount = 0;
+                daysInMonth.forEach(day => {
+                    if (attendanceMap[student.student_id] && attendanceMap[student.student_id][day]) {
+                        row.push('P'); presentCount++;
+                    } else { row.push('A'); }
+                });
+                row.push(presentCount);
+                csvContent += row.join(',') + '\n';
             });
 
-            row.push(presentCount);
-            csvContent += row.join(',') + '\n';
-        });
-
-        const filename = `Attendance_${sectionName.replace(/\s+/g, '_')}_${month}.csv`;
-
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.send(csvContent);
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="Attendance_${sectionName}_${month}.csv"`);
+            res.send(csvContent);
+        }
 
     } catch (err) {
         debugLogWriteToFile(`[EXPORT] GENERATE ERROR: ${err.message}`);

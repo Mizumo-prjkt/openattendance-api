@@ -505,6 +505,20 @@ app.get('/api/system/cert-status', async (req, res) => {
     }
 });
 
+app.post('/api/system/regenerate-cert', (req, res) => {
+    const certsDir = path.join(__dirname, 'certs');
+    try {
+        if (fs.existsSync(certsDir)) {
+            fs.rmSync(certsDir, { recursive: true, force: true });
+        }
+        res.json({ success: true, message: "Certificates deleted. Server restarting..." });
+        console.log("[SYSTEM] Certificates regenerated. Triggering restart...");
+        setTimeout(() => process.exit(1), 1000); // Exit with 1 to force nodemon restart
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 async function startServer() {
     const certsDir = path.join(__dirname, 'certs');
     const keyPath = path.join(certsDir, 'server.key');
@@ -563,7 +577,11 @@ async function startServer() {
                 days: 365,
                 algorithm: 'sha256',
                 keySize: 2048,
-                extensions: [{ name: 'subjectAltName', altNames: altNames }]
+                extensions: [
+                    { name: 'basicConstraints', cA: true }, // Critical for Android to accept as CA
+                    { name: 'keyUsage', keyCertSign: true, digitalSignature: true, nonRepudiation: true, keyEncipherment: true, dataEncipherment: true },
+                    { name: 'subjectAltName', altNames: altNames }
+                ]
             });
 
             fs.writeFileSync(keyPath, pems.private);

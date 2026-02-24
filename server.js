@@ -2741,8 +2741,8 @@ app.get('/api/export/generate', async (req, res) => {
                     }
 
                     // 2. Prepare paths and data
-                    const pythonScriptPath = path.join(scriptDir, 'main.py');
                     const scriptDir = path.join(__dirname, 'sf2_software_bin');
+                    const pythonScriptPath = path.join(scriptDir, 'main.py');
 
                     if (!fs.existsSync(pythonScriptPath)) {
                         throw new Error("SF2 generation script (main.py) not found in 'api/sf2_software_bin/' directory. Please ensure the software is placed there.");

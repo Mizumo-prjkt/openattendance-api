@@ -25,6 +25,8 @@ const PORT = process.env.PORT || 8080;
 const mkdirp = require('mkdirp');
 const crypto = require('crypto');
 const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 const e = require('express');
 const { DESTRUCTION } = require('dns');
 const os = require('os');
@@ -42,9 +44,6 @@ try {
 } catch (e) {
     console.log("[SMS] Optional dependency @zigasebenik/zte-sms not found.");
 }
-
-// Configuration
-const SF2_SERVICE_URL = process.env.SF2_SERVICE_URL || 'http://127.0.0.1:5000/gen-sf2';
 
 // Initial
 let debugMode = false;
@@ -2553,6 +2552,48 @@ app.get('/api/export/permissions', async (req, res) => {
     }
 });
 
+const sf2ScriptDir = path.join(__dirname, 'sf2_software_bin');
+const venvPath = path.join(sf2ScriptDir, 'venv');
+const isWindows = os.platform() === 'win32';
+const pythonExecutable = isWindows ? 'python.exe' : 'python';
+const pipExecutable = isWindows ? 'pip.exe' : 'pip';
+const pythonVenvPath = path.join(venvPath, isWindows ? 'Scripts' : 'bin', pythonExecutable);
+const pipVenvPath = path.join(venvPath, isWindows ? 'Scripts' : 'bin', pipExecutable);
+const depsInstalledMarker = path.join(sf2ScriptDir, '.deps_installed');
+
+let isPythonEnvReady = false;
+
+async function ensurePythonEnv() {
+    if (isPythonEnvReady) return;
+
+    console.log('[SF2] Checking Python environment...');
+
+    if (!fs.existsSync(venvPath)) {
+        console.log('[SF2] Virtual environment not found. Creating one...');
+        try {
+            await execPromise(`python3 -m venv venv`, { cwd: sf2ScriptDir });
+            console.log('[SF2] Virtual environment created.');
+        } catch (err) {
+            console.error('[SF2] Failed to create virtual environment:', err.stderr || err.message);
+            throw new Error(`Failed to create Python venv. Make sure 'python3' is installed and in PATH. Details: ${err.stderr || err.message}`);
+        }
+    }
+
+    if (!fs.existsSync(depsInstalledMarker)) {
+        console.log('[SF2] Dependencies not installed. Installing from requirements.txt...');
+        try {
+            await execPromise(`"${pipVenvPath}" install -r requirements.txt`, { cwd: sf2ScriptDir });
+            fs.writeFileSync(depsInstalledMarker, new Date().toISOString());
+            console.log('[SF2] Dependencies installed successfully.');
+        } catch (err) {
+            console.error('[SF2] Failed to install dependencies:', err.stderr || err.message);
+            throw new Error(`Failed to install Python dependencies. Details: ${err.stderr || err.message}`);
+        }
+    }
+
+    isPythonEnvReady = true;
+}
+
 // Generate Export Report
 app.get('/api/export/generate', async (req, res) => {
     const { section_id, month, format } = req.query; // month in YYYY-MM
@@ -2681,51 +2722,82 @@ app.get('/api/export/generate', async (req, res) => {
                 res.setHeader('Content-Disposition', `attachment; filename="Attendance_${sectionName}_${month}.json"`);
                 res.send(JSON.stringify(jsonOutput, null, 4));
             } else {
-                // SF2 Generation via Python Service
+                // SF2 Generation via local Python script
+                const tempId = crypto.randomBytes(8).toString('hex');
+                const jsonInputPath = path.join(tmpDir, `sf2_input_${tempId}.json`);
+                let generatedFilePath = null; // To hold the path of the generated file for cleanup
+
                 try {
-                    if (typeof fetch === 'undefined') {
-                        throw new Error("Node.js `fetch` is not available. Please upgrade to Node.js 18+.");
+                    await ensurePythonEnv();
+
+                    // 1. Check student limits based on local script documentation
+                    const maleCount = jsonOutput.students.filter(s => s.gender === 'M').length;
+                    const femaleCount = jsonOutput.students.filter(s => s.gender === 'F').length;
+                    if (maleCount > 30 || femaleCount > 30) {
+                        return res.status(400).json({
+                            error: "SF2 generation failed",
+                            details: `This class exceeds the 30-student limit per gender for local generation (Males: ${maleCount}, Females: ${femaleCount}).`
+                        });
                     }
 
-                    console.log(`[EXPORT] Requesting SF2 generation from ${SF2_SERVICE_URL}`);
+                    // 2. Prepare paths and data
+                    const pythonScriptPath = path.join(scriptDir, 'main.py');
+                    const scriptDir = path.join(__dirname, 'sf2_software_bin');
 
-                    const sf2Response = await fetch(SF2_SERVICE_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(jsonOutput)
-                    });
-
-                    if (!sf2Response.ok) {
-                        throw new Error(`Service responded with ${sf2Response.status} ${sf2Response.statusText}`);
+                    if (!fs.existsSync(pythonScriptPath)) {
+                        throw new Error("SF2 generation script (main.py) not found in 'api/sf2_software_bin/' directory. Please ensure the software is placed there.");
                     }
 
-                    const arrayBuffer = await sf2Response.arrayBuffer();
-                    const buffer = Buffer.from(arrayBuffer);
+                    fs.writeFileSync(jsonInputPath, JSON.stringify(jsonOutput, null, 2));
 
-                    res.setHeader('Content-Type', 'application/zip');
-                    res.setHeader('Content-Disposition', `attachment; filename="SF2_Report_${sectionName}_${month}.zip"`);
-                    res.send(buffer);
-                } catch (serviceErr) {
-                    console.error(`[EXPORT] SF2 Service Error (${SF2_SERVICE_URL}): ${serviceErr.message}`);
-                    if (serviceErr.cause) {
-                        console.error(`[EXPORT] Underlying Error Cause:`, serviceErr.cause);
+                    // 3. Execute script
+                    const command = `"${pythonVenvPath}" main.py --json "${jsonInputPath}"`;
+                    console.log(`[EXPORT] Executing SF2 script in ${scriptDir}: ${command}`);
+                    const { stdout, stderr } = await execPromise(command, { cwd: scriptDir });
+
+                    if (stderr) console.warn(`[EXPORT] SF2 Script Stderr: ${stderr}`);
+                    console.log(`[EXPORT] SF2 Script Stdout: ${stdout}`);
+
+                    // 4. Find the generated file by finding the most recently created .xlsx file
+                    const files = fs.readdirSync(scriptDir);
+                    const mostRecentFile = files
+                        .filter(f => f.endsWith('.xlsx'))
+                        .map(f => ({ name: f, mtime: fs.statSync(path.join(scriptDir, f)).mtime.getTime() }))
+                        .sort((a, b) => b.mtime - a.mtime)[0];
+
+                    if (mostRecentFile && (Date.now() - mostRecentFile.mtime) < 15000) { // Must be created in the last 15 seconds
+                        generatedFilePath = path.join(scriptDir, mostRecentFile.name);
+                    } else {
+                        throw new Error(`SF2 generation failed. Could not find the generated .xlsx file in the script directory.`);
                     }
-                    debugLogWriteToFile(`[EXPORT] SF2 Service Error: ${serviceErr.message}`);
                     
-                    let details = serviceErr.message;
-                    if (serviceErr.cause) {
-                        const causeMsg = serviceErr.cause.message || serviceErr.cause.code || String(serviceErr.cause);
-                        details = `${serviceErr.message} -> ${causeMsg}`;
-                    }
+                    // 5. Send file
+                    const fileBuffer = fs.readFileSync(generatedFilePath);
+                    const outputFileName = `SF2_Report_${sectionName}_${month}.xlsx`;
+                    
+                    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+                    res.setHeader('Content-Disposition', `attachment; filename="${outputFileName}"`);
+                    res.send(fileBuffer);
 
-                    if ((serviceErr.cause && serviceErr.cause.code === 'ECONNREFUSED') || serviceErr.message.includes('ECONNREFUSED')) {
-                        details = `Connection refused to ${SF2_SERVICE_URL}. Is the Python server running?`;
-                    }
-
-                    res.status(502).json({ 
-                        error: "SF2 Generation Service Unavailable.", 
-                        details: details 
+                } catch (execErr) {
+                    console.error(`[EXPORT] SF2 Script Execution Error: ${execErr.message}`);
+                    const errorDetails = execErr.stderr || execErr.stdout || execErr.message;
+                    debugLogWriteToFile(`[EXPORT] SF2 Script Execution Error: ${errorDetails}`);
+                    // Invalidate env check cache on error to force re-check
+                    isPythonEnvReady = false;
+                    if (fs.existsSync(depsInstalledMarker)) fs.unlinkSync(depsInstalledMarker);
+                    res.status(500).json({
+                        error: "SF2 Generation Script Failed.",
+                        details: errorDetails
                     });
+                } finally {
+                    // 6. Cleanup
+                    if (fs.existsSync(jsonInputPath)) {
+                        fs.unlinkSync(jsonInputPath);
+                    }
+                    if (generatedFilePath && fs.existsSync(generatedFilePath)) {
+                        fs.unlinkSync(generatedFilePath);
+                    }
                 }
             }
 

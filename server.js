@@ -2683,6 +2683,12 @@ app.get('/api/export/generate', async (req, res) => {
             } else {
                 // SF2 Generation via Python Service
                 try {
+                    if (typeof fetch === 'undefined') {
+                        throw new Error("Node.js `fetch` is not available. Please upgrade to Node.js 18+.");
+                    }
+
+                    console.log(`[EXPORT] Requesting SF2 generation from ${SF2_SERVICE_URL}`);
+
                     const sf2Response = await fetch(SF2_SERVICE_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -2700,11 +2706,17 @@ app.get('/api/export/generate', async (req, res) => {
                     res.setHeader('Content-Disposition', `attachment; filename="SF2_Report_${sectionName}_${month}.zip"`);
                     res.send(buffer);
                 } catch (serviceErr) {
-                    console.error(`[EXPORT] SF2 Service Error: ${serviceErr.message}`);
+                    console.error(`[EXPORT] SF2 Service Error (${SF2_SERVICE_URL}): ${serviceErr.message}`);
                     debugLogWriteToFile(`[EXPORT] SF2 Service Error: ${serviceErr.message}`);
+                    
+                    let details = serviceErr.message;
+                    if ((serviceErr.cause && serviceErr.cause.code === 'ECONNREFUSED') || serviceErr.message.includes('ECONNREFUSED')) {
+                        details = `Connection refused to ${SF2_SERVICE_URL}. Is the Python server running?`;
+                    }
+
                     res.status(502).json({ 
-                        error: "SF2 Generation Service Unavailable. Please ensure the Python server is running.", 
-                        details: serviceErr.message 
+                        error: "SF2 Generation Service Unavailable.", 
+                        details: details 
                     });
                 }
             }

@@ -819,6 +819,13 @@ async function checkAndInitDB() {
                     )
                 `);
 
+                                
+                // 17. Feature Toggles
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_event_based BOOLEAN DEFAULT TRUE");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_id_generation BOOLEAN DEFAULT TRUE");
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_sf2_generation BOOLEAN DEFAULT TRUE");
+
+
                 // Ensure default calendar config
                 const calConfigCheck = await hotfixClient.query('SELECT 1 FROM calendar_config LIMIT 1');
                 if (calConfigCheck.rows.length === 0) {
@@ -2844,7 +2851,7 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window } = req.body;
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window, feature_event_based, feature_id_generation, feature_sf2_generation } = req.body;
 
     const client = await pool.connect();
     try {
@@ -2873,12 +2880,16 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
                 time_in_start || null, time_late_threshold || null, time_out_target || null
             ];
 
+            const feat_event = feature_event_based !== undefined ? feature_event_based === 'true' : null;
+            const feat_id = feature_id_generation !== undefined ? feature_id_generation === 'true' : null;
+            const feat_sf2 = feature_sf2_generation !== undefined ? feature_sf2_generation === 'true' : null;
+
             if (req.file) {
-                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule), strict_attendance_window = COALESCE($16, strict_attendance_window) WHERE config_id = $14`;
-                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null);
+                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule), strict_attendance_window = COALESCE($16, strict_attendance_window), feature_event_based = COALESCE($17, feature_event_based), feature_id_generation = COALESCE($18, feature_id_generation), feature_sf2_generation = COALESCE($19, feature_sf2_generation) WHERE config_id = $14`;
+                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
             } else {
-                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule), strict_attendance_window = COALESCE($15, strict_attendance_window) WHERE config_id = $13`;
-                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null);
+                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule), strict_attendance_window = COALESCE($15, strict_attendance_window), feature_event_based = COALESCE($16, feature_event_based), feature_id_generation = COALESCE($17, feature_id_generation), feature_sf2_generation = COALESCE($18, feature_sf2_generation) WHERE config_id = $13`;
+                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
             }
             await client.query(query, params);
         }

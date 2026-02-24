@@ -2759,16 +2759,17 @@ app.get('/api/export/generate', async (req, res) => {
                     console.log(`[EXPORT] SF2 Script Stdout: ${stdout}`);
 
                     // 4. Find the generated file by finding the most recently created .xlsx file
-                    const files = fs.readdirSync(scriptDir);
+                    // The python script outputs the file in the same directory as the input JSON, which is our /tmp directory.
+                    const files = fs.readdirSync(tmpDir);
                     const mostRecentFile = files
                         .filter(f => f.endsWith('.xlsx'))
-                        .map(f => ({ name: f, mtime: fs.statSync(path.join(scriptDir, f)).mtime.getTime() }))
+                        .map(f => ({ name: f, mtime: fs.statSync(path.join(tmpDir, f)).mtime.getTime() }))
                         .sort((a, b) => b.mtime - a.mtime)[0];
 
                     if (mostRecentFile && (Date.now() - mostRecentFile.mtime) < 15000) { // Must be created in the last 15 seconds
-                        generatedFilePath = path.join(scriptDir, mostRecentFile.name);
+                        generatedFilePath = path.join(tmpDir, mostRecentFile.name);
                     } else {
-                        throw new Error(`SF2 generation failed. Could not find the generated .xlsx file in the script directory.`);
+                        throw new Error(`SF2 generation failed. Could not find the generated .xlsx file in the script's output directory.`);
                     }
                     
                     // 5. Send file

@@ -1,0 +1,8 @@
+PyQt6
+openpyxl
+textual
+textual-dev
+simple-term-menu
+Pillow
+Flask
+python-dotenv

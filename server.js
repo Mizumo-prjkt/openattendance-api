@@ -1023,6 +1023,16 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_id_generation BOOLEAN DEFAULT TRUE");
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_sf2_generation BOOLEAN DEFAULT TRUE");
 
+                // 18. Time Debugging Columns (Client/Server/NTP)
+                // We use TEXT for client timestamp to preserve the exact ISO string sent by browser (UTC) for debugging
+                await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_in_client TEXT");
+                await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_in_server TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out_client TEXT");
+                await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out_server TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_in_client TEXT");
+                await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_in_server TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_client TEXT");
+                await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_server TIMESTAMP");
 
                 // Ensure default calendar config
                 const calConfigCheck = await hotfixClient.query('SELECT 1 FROM calendar_config LIMIT 1');
@@ -1048,6 +1058,21 @@ async function checkAndInitDB() {
                 hotfixClient.release();
             };
         }
+
+        // Apply global timezone based on school config
+        try {
+            const configRes = await pool.query("SELECT country_code FROM configurations LIMIT 1");
+            const dbName = process.env.DB_NAME || 'openattendance';
+            if (configRes.rows.length > 0) {
+                const tz = CountryTimezones[(configRes.rows[0].country_code || 'PH').toUpperCase()] || 'Asia/Manila';
+                globalCachedTimeZone = tz;
+                await pool.query(`ALTER DATABASE "${dbName}" SET timezone TO '${tz}'`);
+                debugLogWriteToFile(`[POSTGRES]: Set default TimeZone to ${tz}`);
+            }
+        } catch (tzErr) {
+            console.warn("[POSTGRES]: Failed to set default timezone:", tzErr.message);
+        }
+
     } catch (err) {
         console.error(`Error checking/initializing DB: ${err.message}`);
         debugLogWriteToFile(`[POSTGRES]: Error checking/initializing DB: ${err.message}`);
@@ -3054,7 +3079,7 @@ app.post('/api/sms/settings', async (req, res) => {
 
         // Check if settings exist
         const checkRes = await client.query('SELECT id FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
-        
+
         // Fix for "null value in column provider_name violates not-null constraint"
         const provider_name = provider_type || 'Generic';
 
@@ -3203,7 +3228,7 @@ app.post('/api/router/settings', async (req, res) => {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-        
+
         const checkRes = await client.query('SELECT id FROM router_settings ORDER BY id DESC LIMIT 1');
         if (checkRes.rows.length > 0) {
             await client.query(`
@@ -3398,12 +3423,20 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00', fixed_weekday_schedule === 'true', strict_attendance_window === 'true']
             );
         } else {
+            if (country_code) {
+                const tz = CountryTimezones[country_code.toUpperCase()] || 'Asia/Manila';
+                globalCachedTimeZone = tz;
+                const dbName = process.env.DB_NAME || 'openattendance';
+                await client.query(`ALTER DATABASE "${dbName}" SET timezone TO '${tz}'`);
+                await client.query(`SET TIME ZONE '${tz}'`);
+            }
+
             // Update existing row
             const id = check.rows[0].config_id;
             let query = `
                 UPDATE configurations 
                 SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year), ntp_server = COALESCE($8, ntp_server),
-            time_in_start = COALESCE($9, time_in_start), time_late_threshold = COALESCE($10, time_late_threshold), time_out_target = COALESCE($11, time_out_target)
+                time_in_start = COALESCE($9, time_in_start), time_late_threshold = COALESCE($10, time_late_threshold), time_out_target = COALESCE($11, time_out_target)
                 `;
             const params = [
                 school_name || null, school_id || null, country_code || null, address || null,
@@ -3877,25 +3910,43 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
 // [ATTENDANCE-SCAN]
 // Kiosk Scan Endpoint
 app.post('/api/attendance/scan', async (req, res) => {
-    const { qr_code, mode, event_id, location, staff_id, type, timestamp } = req.body;
+    const { qr_code, mode, event_id, location, staff_id, type, timestamp, client_timestamp } = req.body;
     const client = await pool.connect();
     const scanType = type || 'in'; // Default to 'in' if not specified
-    const recordTime = timestamp || null; // Use provided timestamp or fallback to NOW() via COALESCE
 
     try {
         // 0. Check Strict Attendance Window
         const configRes = await client.query("SELECT time_in_start, time_out_target, strict_attendance_window, country_code FROM configurations LIMIT 1");
         const config = configRes.rows[0] || {};
 
+        const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
+
+        let recordTime = null;
+        if (timestamp) {
+            // Postgres silently ignores the 'Z' in ISO strings for TIMESTAMP WITHOUT TIME ZONE.
+            // We must explicitly format the UTC time into the school's local time string before insertion.
+            const dateObj = new Date(timestamp);
+            const formatter = new Intl.DateTimeFormat('en-US', {
+                timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+            });
+            const parts = formatter.formatToParts(dateObj);
+            const p = {};
+            for (const part of parts) p[part.type] = part.value;
+            // Format: YYYY-MM-DD HH:mm:ss
+            recordTime = `${p.year}-${p.month}-${p.day} ${p.hour === '24' ? '00' : p.hour}:${p.minute}:${p.second}`;
+        }
+
+
         if (config.strict_attendance_window) {
             try {
                 // Determine current time in School's Timezone using robust Intl formatting
-                const now = new Date(recordTime || Date.now());
-                const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
+                const now = new Date(timestamp || Date.now());
 
                 const formatter = new Intl.DateTimeFormat('en-US', {
                     timeZone,
                     hour: 'numeric',
+
                     minute: 'numeric',
                     hour12: false
                 });
@@ -3959,15 +4010,15 @@ app.post('/api/attendance/scan', async (req, res) => {
                 }
                 // Otherwise (no record OR previous record has time_out), allow new entry
                 await client.query(
-                    "INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, COALESCE($4, NOW()))",
-                    [event_id, student.student_id, location || 'Kiosk', recordTime]
+                    "INSERT INTO event_attendance (event_id, student_id, location, time_in, time_in_client, time_in_server) VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, NOW())",
+                    [event_id, student.student_id, location || 'Kiosk', recordTime, client_timestamp]
                 );
             } else {
                 // Time Out
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
 
-                await client.query("UPDATE event_attendance SET time_out = COALESCE($2, NOW()) WHERE id = $1", [check.rows[0].id, recordTime]);
+                await client.query("UPDATE event_attendance SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE id = $1", [check.rows[0].id, recordTime, client_timestamp]);
             }
         } else {
             // Normal Mode (Daily Attendance)
@@ -3981,14 +4032,14 @@ app.post('/api/attendance/scan', async (req, res) => {
                     return res.status(409).json({ error: 'Already checked in today', student });
                 }
                 await client.query(
-                    "INSERT INTO present (student_id, time_in, staff_id, location) VALUES ($1, COALESCE($4, NOW()), $2, $3)",
-                    [student.student_id, staff_id || null, location || 'Kiosk', recordTime]
+                    "INSERT INTO present (student_id, time_in, staff_id, location, time_in_client, time_in_server) VALUES ($1, COALESCE($4, NOW()), $2, $3, $5, NOW())",
+                    [student.student_id, staff_id || null, location || 'Kiosk', recordTime, client_timestamp]
                 );
             } else {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
 
-                await client.query("UPDATE present SET time_out = COALESCE($2, NOW()) WHERE present_id = $1", [check.rows[0].present_id, recordTime]);
+                await client.query("UPDATE present SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE present_id = $1", [check.rows[0].present_id, recordTime, client_timestamp]);
             }
         }
 
@@ -4592,6 +4643,9 @@ app.use((err, req, res, next) => {
     if (!res.headersSent) res.status(500).json({ error: 'Internal Server Error', details: err.message });
 });
 
+// Global Cached TimeZone
+let globalCachedTimeZone = 'Asia/Manila';
+
 // Set the PostgreSQL DB
 // Configuration should ideally come from environment variables
 const pool = new Pool({
@@ -4600,6 +4654,12 @@ const pool = new Pool({
     database: process.env.DB_NAME || 'openattendance',
     password: process.env.DB_PASSWORD || 'password',
     port: process.env.DB_PORT || 5432,
+});
+
+pool.on('connect', (client) => {
+    client.query(`SET TIME ZONE '${globalCachedTimeZone}'`).catch(err => {
+        console.error('[POSTGRES]: Failed to set time zone for new client:', err);
+    });
 });
 
 // Test connection and start the server

@@ -454,6 +454,29 @@ app.get('/api/system/ca-cert', (req, res) => {
     }
 });
 
+app.get('/api/system/cert-status', async (req, res) => {
+    const certPath = path.join(__dirname, 'certs', 'server.cert');
+    if (!fs.existsSync(certPath)) {
+        return res.json({ status: 'missing' });
+    }
+    try {
+        const certContent = fs.readFileSync(certPath, 'utf8');
+        const cert = forge.pki.certificateFromPem(certContent);
+        const validFrom = cert.validity.notBefore;
+        const validTo = cert.validity.notAfter;
+        const fingerprint = forge.md.sha1.create().update(forge.asn1.toDer(cert.publicKey).getBytes()).digest().toHex();
+
+        res.json({
+            status: 'valid',
+            validFrom,
+            validTo,
+            fingerprint
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 async function startServer() {
     const certsDir = path.join(__dirname, 'certs');
     const keyPath = path.join(certsDir, 'server.key');

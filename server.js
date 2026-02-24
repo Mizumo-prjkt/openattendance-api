@@ -3117,6 +3117,155 @@ app.post('/api/sms/send', async (req, res) => {
         client.release();
     }
 });
+// [ROUTER SYSTEM]
+const huaweiLteApi = require('huawei-lte-api');
+
+// Helper to get connected device, commented out to avoid connection during flashing
+async function getHuaweiConnection(client) {
+    // Ensure table exists
+    await client.query(`
+        CREATE TABLE IF NOT EXISTS router_settings (
+            id SERIAL PRIMARY KEY,
+            router_url TEXT DEFAULT 'http://192.168.8.1/',
+            username TEXT DEFAULT 'admin',
+            password TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    const res = await client.query('SELECT * FROM router_settings ORDER BY id DESC LIMIT 1');
+    const settings = res.rows[0];
+    if (!settings || !settings.router_url) {
+        throw new Error("Router settings not configured.");
+    }
+
+    // Construct connection URL: e.g. http://admin:password@192.168.8.1/
+    const urlObj = new URL(settings.router_url);
+    if (settings.username) urlObj.username = settings.username;
+    if (settings.password) urlObj.password = settings.password;
+
+    const connectionUrl = urlObj.toString();
+    const connection = new huaweiLteApi.Connection(connectionUrl);
+
+    return connection;
+}
+
+// Get Router Settings
+app.get('/api/router/settings', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS router_settings (
+                id SERIAL PRIMARY KEY,
+                router_url TEXT DEFAULT 'http://192.168.8.1/',
+                username TEXT DEFAULT 'admin',
+                password TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        const result = await client.query('SELECT * FROM router_settings ORDER BY id DESC LIMIT 1');
+        res.json(result.rows[0] || {});
+    } catch (err) {
+        debugLogWriteToFile(`[ROUTER] GET SETTINGS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Save Router Settings
+app.post('/api/router/settings', async (req, res) => {
+    const { router_url, username, password } = req.body;
+    const client = await pool.connect();
+    try {
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS router_settings (
+                id SERIAL PRIMARY KEY,
+                router_url TEXT DEFAULT 'http://192.168.8.1/',
+                username TEXT DEFAULT 'admin',
+                password TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await client.query(`
+            INSERT INTO router_settings (router_url, username, password)
+            VALUES ($1, $2, $3)
+        `, [router_url, username, password]);
+        res.json({ success: true });
+    } catch (err) {
+        debugLogWriteToFile(`[ROUTER] SAVE SETTINGS ERROR: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// Get Router Signal
+app.get('/api/router/signal', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const connection = await getHuaweiConnection(client);
+
+        // Wait for connection to be ready
+        await connection.ready;
+
+        const device = new huaweiLteApi.Device(connection);
+        const signal = await device.signal();
+
+        res.json({ success: true, signal });
+    } catch (err) {
+        // NOTE: While router is being flashed, this will likely fail or timeout. 
+        debugLogWriteToFile(`[ROUTER] GET SIGNAL ERROR: ${err.message}`);
+        res.status(500).json({ error: `Could not connect to router. It may be offline due to flashing. Details: ${err.message}` });
+    } finally {
+        client.release();
+    }
+});
+
+// Get Router Info
+app.get('/api/router/info', async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const connection = await getHuaweiConnection(client);
+
+        // Wait for connection to be ready
+        await connection.ready;
+
+        const device = new huaweiLteApi.Device(connection);
+        const info = await device.information();
+
+        res.json({ success: true, info });
+    } catch (err) {
+        // NOTE: While router is being flashed, this will likely fail or timeout.
+        debugLogWriteToFile(`[ROUTER] GET INFO ERROR: ${err.message}`);
+        res.status(500).json({ error: `Could not connect to router. It may be offline due to flashing. Details: ${err.message}` });
+    } finally {
+        client.release();
+    }
+});
+
+// Set Router Data Switch
+app.post('/api/router/data-switch', async (req, res) => {
+    const { status } = req.body; // Expecting status to be 1 or 0
+    const client = await pool.connect();
+    try {
+        const connection = await getHuaweiConnection(client);
+
+        // Wait for connection to be ready
+        await connection.ready;
+
+        const dialUp = new huaweiLteApi.DialUp(connection);
+        const switchStatus = parseInt(status) === 1 ? 1 : 0;
+        const result = await dialUp.setMobileDataswitch(switchStatus);
+
+        res.json({ success: true, result });
+    } catch (err) {
+        // NOTE: While router is being flashed, this will likely fail or timeout.
+        debugLogWriteToFile(`[ROUTER] SET DATA SWITCH ERROR: ${err.message}`);
+        res.status(500).json({ error: `Could not connect to router. It may be offline due to flashing. Details: ${err.message}` });
+    } finally {
+        client.release();
+    }
+});
 
 // [ID CARDS]
 // Get all users for ID generation
@@ -3134,13 +3283,13 @@ app.get('/api/id-cards/list', async (req, res) => {
         // Students
         const studentsQuery = `
             SELECT 
-                student_id, first_name, last_name, classroom_section, 
-                emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-                profile_image_path
+                student_id, first_name, last_name, classroom_section,
+            emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+            profile_image_path
             FROM students 
             WHERE status = 'Active'
             ORDER BY last_name ASC
-        `;
+            `;
         const studentsRes = await client.query(studentsQuery);
 
         // Staff
@@ -3150,7 +3299,7 @@ app.get('/api/id-cards/list', async (req, res) => {
             FROM staff_accounts 
             WHERE active = 1
             ORDER BY name ASC
-        `;
+            `;
         const staffRes = await client.query(staffQuery);
 
         const users = [];
@@ -3158,12 +3307,12 @@ app.get('/api/id-cards/list', async (req, res) => {
         // Process Students
         studentsRes.rows.forEach(s => {
             users.push({
-                id: `student-${s.student_id}`,
+                id: `student - ${s.student_id}`,
                 type: 'student',
                 name: `${s.first_name} ${s.last_name}`,
                 idNumber: s.student_id,
                 section: s.classroom_section || 'Unassigned',
-                emergency: s.emergency_contact_name ? `${s.emergency_contact_name} (${s.emergency_contact_relationship || 'Contact'}) - ${s.emergency_contact_phone || ''}` : 'N/A',
+                emergency: s.emergency_contact_name ? `${s.emergency_contact_name}(${s.emergency_contact_relationship || 'Contact'}) - ${s.emergency_contact_phone || ''}` : 'N/A',
                 profile_image: s.profile_image_path
             });
         });
@@ -3171,7 +3320,7 @@ app.get('/api/id-cards/list', async (req, res) => {
         // Process Staff
         staffRes.rows.forEach(s => {
             users.push({
-                id: `staff-${s.staff_id}`,
+                id: `staff - ${s.staff_id}`,
                 type: 'staff',
                 name: s.name,
                 idNumber: s.staff_id,
@@ -3183,7 +3332,7 @@ app.get('/api/id-cards/list', async (req, res) => {
 
         res.json({ users, config });
     } catch (err) {
-        debugLogWriteToFile(`[ID CARDS] LIST ERROR: ${err.message}`);
+        debugLogWriteToFile(`[ID CARDS]LIST ERROR: ${err.message}`);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -3217,10 +3366,10 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
 
         if (check.rows.length === 0) {
             // Insert (Only if table is empty)
-            const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
+            const logoPath = req.file ? `/ assets / images / logos / ${req.file.filename}` : null;
             await client.query(
-                `INSERT INTO configurations (school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window)
-                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                `INSERT INTO configurations(school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window)
+                  VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
                 [school_name, school_id, country_code, address, principal_name, principal_title, school_year, logoPath, maintenance_mode === 'true', ntp_server || 'pool.ntp.org', time_in_start || '05:00:00', time_late_threshold || '08:00:00', time_out_target || '16:00:00', fixed_weekday_schedule === 'true', strict_attendance_window === 'true']
             );
         } else {
@@ -3229,8 +3378,8 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
             let query = `
                 UPDATE configurations 
                 SET school_name = COALESCE($1, school_name), school_id = COALESCE($2, school_id), country_code = COALESCE($3, country_code), address = COALESCE($4, address), principal_name = COALESCE($5, principal_name), principal_title = COALESCE($6, principal_title), school_year = COALESCE($7, school_year), ntp_server = COALESCE($8, ntp_server),
-                time_in_start = COALESCE($9, time_in_start), time_late_threshold = COALESCE($10, time_late_threshold), time_out_target = COALESCE($11, time_out_target)
-            `;
+            time_in_start = COALESCE($9, time_in_start), time_late_threshold = COALESCE($10, time_late_threshold), time_out_target = COALESCE($11, time_out_target)
+                `;
             const params = [
                 school_name || null, school_id || null, country_code || null, address || null,
                 principal_name || null, principal_title || null, school_year || null, ntp_server || null,
@@ -3243,7 +3392,7 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
 
             if (req.file) {
                 query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule), strict_attendance_window = COALESCE($16, strict_attendance_window), feature_event_based = COALESCE($17, feature_event_based), feature_id_generation = COALESCE($18, feature_id_generation), feature_sf2_generation = COALESCE($19, feature_sf2_generation) WHERE config_id = $14`;
-                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
+                params.push(`/ assets / images / logos / ${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
             } else {
                 query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule), strict_attendance_window = COALESCE($15, strict_attendance_window), feature_event_based = COALESCE($16, feature_event_based), feature_id_generation = COALESCE($17, feature_id_generation), feature_sf2_generation = COALESCE($18, feature_sf2_generation) WHERE config_id = $13`;
                 params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
@@ -3274,7 +3423,7 @@ app.get('/api/database/backup', (req, res) => {
 
     // Use PGPASSWORD env var to avoid password prompt
     const env = { ...process.env, PGPASSWORD: dbPassword };
-    const command = `pg_dump -U ${dbUser} -h ${dbHost} -p ${dbPort} -F p ${dbName} > "${filePath}"`;
+    const command = `pg_dump - U ${dbUser} - h ${dbHost} - p ${dbPort} - F p ${dbName} > "${filePath}"`;
 
     debugLogWriteToFile(`[DATABASE] Starting backup to ${filePath}`);
 
@@ -3305,7 +3454,7 @@ app.post('/api/database/backup-local', (req, res) => {
 
     // Use PGPASSWORD env var to avoid password prompt
     const env = { ...process.env, PGPASSWORD: dbPassword };
-    const command = `pg_dump -U ${dbUser} -h ${dbHost} -p ${dbPort} -F p ${dbName} > "${filePath}"`;
+    const command = `pg_dump - U ${dbUser} - h ${dbHost} - p ${dbPort} - F p ${dbName} > "${filePath}"`;
 
     debugLogWriteToFile(`[DATABASE] Starting local server backup to ${filePath}`);
 
@@ -3345,7 +3494,7 @@ app.post('/api/database/restore', uploadBackup, (req, res) => {
     // Use PGPASSWORD env var to avoid password prompt
     const env = { ...process.env, PGPASSWORD: dbPassword };
     // psql command to restore
-    const command = `psql -U ${dbUser} -h ${dbHost} -p ${dbPort} -d ${dbName} -f "${filePath}"`;
+    const command = `psql - U ${dbUser} - h ${dbHost} - p ${dbPort} - d ${dbName} - f "${filePath}"`;
 
     debugLogWriteToFile(`[DATABASE] Starting restore from ${filePath}`);
 
@@ -3370,8 +3519,8 @@ app.get('/api/database/stats', async (req, res) => {
         const query = `
             SELECT
                 relname as table_name,
-                n_live_tup as row_count,
-                pg_size_pretty(pg_total_relation_size(relid)) as total_size
+            n_live_tup as row_count,
+            pg_size_pretty(pg_total_relation_size(relid)) as total_size
             FROM pg_stat_user_tables
             ORDER BY pg_total_relation_size(relid) DESC;
         `;
@@ -3385,7 +3534,7 @@ app.get('/api/database/stats', async (req, res) => {
 
         res.json(stats);
     } catch (err) {
-        debugLogWriteToFile(`[DATABASE] STATS ERROR: ${err.message}`);
+        debugLogWriteToFile(`[DATABASE] STATS ERROR: ${err.message} `);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -3427,7 +3576,7 @@ app.post('/api/database/maintenance/:task', async (req, res) => {
             res.status(400).json({ error: 'Invalid maintenance task' });
         }
     } catch (err) {
-        debugLogWriteToFile(`[MAINTENANCE] ERROR (${task}): ${err.message}`);
+        debugLogWriteToFile(`[MAINTENANCE] ERROR(${task}): ${err.message}`);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -3586,7 +3735,7 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
         // 0. Setup: Ensure Benchmark Tables Exist
         const check = await client.query("SELECT to_regclass('public.perf_test_single_idx')");
         if (!check.rows[0].to_regclass) {
-            debugLogWriteToFile(`[BENCHMARK] Tables missing. Applying benchmark schema...`);
+            debugLogWriteToFile(`[BENCHMARK] Tables missing.Applying benchmark schema...`);
             const schemaPath = path.join(__dirname, 'database_benchmark_schema.sql');
             if (fs.existsSync(schemaPath)) {
                 const sql = fs.readFileSync(schemaPath, 'utf8');
@@ -3640,7 +3789,7 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
             const tables = ['perf_test_random_1', 'perf_test_random_2', 'perf_test_random_3'];
             for (let i = 0; i < 150; i++) {
                 const tbl = tables[Math.floor(Math.random() * tables.length)];
-                await client.query(`INSERT INTO ${tbl} (val) VALUES ($1)`, ['random_val']);
+                await client.query(`INSERT INTO ${tbl}(val) VALUES($1)`, ['random_val']);
                 await client.query(`SELECT * FROM ${tbl} LIMIT 1`);
             }
             results.random_table_io_150_ops = `${Date.now() - start}ms`;
@@ -3743,11 +3892,11 @@ app.post('/api/attendance/scan', async (req, res) => {
                 if (currentTotalMinutes < startTotalMinutes || currentTotalMinutes > endTotalMinutes) {
                     const endH_disp = Math.floor(endTotalMinutes / 60) % 24;
                     const endM_disp = endTotalMinutes % 60;
-                    const endStr = `${String(endH_disp).padStart(2, '0')}:${String(endM_disp).padStart(2, '0')}`;
-                    return res.status(403).json({ error: `Attendance is closed. Allowed: ${config.time_in_start} - ${endStr}` });
+                    const endStr = `${String(endH_disp).padStart(2, '0')}: ${String(endM_disp).padStart(2, '0')}`;
+                    return res.status(403).json({ error: `Attendance is closed.Allowed: ${config.time_in_start} - ${endStr}` });
                 }
             } catch (timeErr) {
-                console.error(`[STRICT-WINDOW] Error calculating time: ${timeErr.message}`);
+                console.error(`[STRICT - WINDOW] Error calculating time: ${timeErr.message}`);
                 // Fail-closed: If we can't verify time, block access
                 return res.status(403).json({ error: "System time verification failed. Access denied for security." });
             }
@@ -3897,7 +4046,7 @@ async function isTodayHoliday(client, dateObj) {
         return customRes.rows.length > 0;
 
     } catch (err) {
-        debugLogWriteToFile(`[HOLIDAY CHECK] Error: ${err.message}`);
+        debugLogWriteToFile(`[HOLIDAY CHECK]Error: ${err.message}`);
         return false; // Fail safe: assume school is open? Or closed? Open seems safer to avoid missing attendance.
     }
 }
@@ -3932,7 +4081,7 @@ async function checkAutoAbsent() {
             // 4.1 Check Holiday (Global)
             const isHoliday = await isTodayHoliday(client, now);
             if (isHoliday) {
-                debugLogWriteToFile(`[AUTO-ABSENT] Skipped. Today is a holiday.`);
+                debugLogWriteToFile(`[AUTO - ABSENT] Skipped.Today is a holiday.`);
                 return 0;
             }
 
@@ -3944,7 +4093,7 @@ async function checkAutoAbsent() {
             let sectionFilter = ``;
             // If fixed schedule is ON, and it is weekend -> Skip ALL
             if (fixedSchedule && isWeekend) {
-                debugLogWriteToFile(`[AUTO-ABSENT] Skipped. Weekend (Fixed Schedule).`);
+                debugLogWriteToFile(`[AUTO - ABSENT] Skipped.Weekend(Fixed Schedule).`);
                 return 0;
             }
 
@@ -3953,25 +4102,25 @@ async function checkAutoAbsent() {
             // Strategy: Select students to mark, but filter by allowed_days
 
             const query = `
-                 WITH target_students AS (
-                     SELECT s.student_id, s.classroom_section
+                 WITH target_students AS(
+            SELECT s.student_id, s.classroom_section
                      FROM students s
                      WHERE s.status = 'Active'
-                     AND NOT EXISTS (
-                        SELECT 1 FROM present p 
+                     AND NOT EXISTS(
+                SELECT 1 FROM present p 
                         WHERE p.student_id = s.student_id 
-                        AND p.time_in::date = CURRENT_DATE
-                     )
-                     AND NOT EXISTS (
-                        SELECT 1 FROM absent a
+                        AND p.time_in:: date = CURRENT_DATE
+            )
+                     AND NOT EXISTS(
+                SELECT 1 FROM absent a
                         WHERE a.student_id = s.student_id 
-                        AND a.absent_datetime::date = CURRENT_DATE
-                     )
-                 )
+                        AND a.absent_datetime:: date = CURRENT_DATE
+            )
+        )
                  SELECT ts.student_id, sec.allowed_days
                  FROM target_students ts
                  LEFT JOIN sections sec ON ts.classroom_section = sec.section_name
-             `;
+    `;
 
             const candidates = await client.query(query);
             const studentsToMark = [];
@@ -4024,17 +4173,17 @@ async function checkAutoAbsent() {
                 // Postgres doesn't have a simple array insert without unnest, but we can iterate or build a query.
                 // For safety/speed, let's use UNNEST
                 const insertQuery = `
-                    INSERT INTO absent (student_id, absent_datetime, reason)
-                    SELECT unnest($1::text[]), NOW(), 'Auto-Absent (No Show)'
-                 `;
+                    INSERT INTO absent(student_id, absent_datetime, reason)
+                    SELECT unnest($1:: text[]), NOW(), 'Auto-Absent (No Show)'
+    `;
 
                 const res = await client.query(insertQuery, [studentsToMark]);
                 count = res.rowCount;
-                debugLogWriteToFile(`[AUTO-ABSENT] Marked ${count} students as absent.`);
+                debugLogWriteToFile(`[AUTO - ABSENT] Marked ${count} students as absent.`);
             }
         }
     } catch (err) {
-        debugLogWriteToFile(`[AUTO-ABSENT] Error: ${err.message}`);
+        debugLogWriteToFile(`[AUTO - ABSENT] Error: ${err.message}`);
     } finally {
         client.release();
     }
@@ -4072,10 +4221,10 @@ async function checkEventStatus() {
             WHERE status = 'planned' 
             AND start_datetime <= $1 
             AND end_datetime > $1
-        `, [now]);
+    `, [now]);
 
         if (ongoingRes.rowCount > 0) {
-            debugLogWriteToFile(`[EVENT WATCHDOG] Set ${ongoingRes.rowCount} events to 'ongoing'.`);
+            debugLogWriteToFile(`[EVENT WATCHDOG]Set ${ongoingRes.rowCount} events to 'ongoing'.`);
             updates += ongoingRes.rowCount;
         }
 
@@ -4084,17 +4233,17 @@ async function checkEventStatus() {
         const completedRes = await client.query(`
             UPDATE events 
             SET status = 'completed' 
-            WHERE status IN ('planned', 'ongoing') 
+            WHERE status IN('planned', 'ongoing') 
             AND end_datetime <= $1
-        `, [now]);
+    `, [now]);
 
         if (completedRes.rowCount > 0) {
-            debugLogWriteToFile(`[EVENT WATCHDOG] Set ${completedRes.rowCount} events to 'completed'.`);
+            debugLogWriteToFile(`[EVENT WATCHDOG]Set ${completedRes.rowCount} events to 'completed'.`);
             updates += completedRes.rowCount;
         }
 
     } catch (err) {
-        debugLogWriteToFile(`[EVENT WATCHDOG] Error: ${err.message}`);
+        debugLogWriteToFile(`[EVENT WATCHDOG]Error: ${err.message}`);
     } finally {
         client.release();
     }
@@ -4307,13 +4456,13 @@ app.get('/api/calendar/holidays', async (req, res) => {
     try {
         // 1. Get Config
         await client.query(`
-            CREATE TABLE IF NOT EXISTS calendar_config (
-                id SERIAL PRIMARY KEY,
-                country TEXT DEFAULT 'PH',
-                state TEXT,
-                region TEXT
-            )
-        `);
+            CREATE TABLE IF NOT EXISTS calendar_config(
+        id SERIAL PRIMARY KEY,
+        country TEXT DEFAULT 'PH',
+        state TEXT,
+        region TEXT
+    )
+    `);
         // Ensure one row exists
         let configRes = await client.query('SELECT * FROM calendar_config LIMIT 1');
         if (configRes.rows.length === 0) {
@@ -4325,7 +4474,7 @@ app.get('/api/calendar/holidays', async (req, res) => {
         // 2. Get Public Holidays via date-holidays
         const hd = new Holidays(config.country, config.state, config.region);
         const publicHolidays = hd.getHolidays(targetYear).map(h => ({
-            id: `pub-${h.date}`, // simple unique id
+            id: `pub - ${h.date}`, // simple unique id
             name: h.name,
             date: h.date.split(' ')[0], // YYYY-MM-DD
             type: h.type, // public, bank, school, optional, observance
@@ -4334,16 +4483,16 @@ app.get('/api/calendar/holidays', async (req, res) => {
 
         // 3. Get Custom Holidays from DB
         await client.query(`
-            CREATE TABLE IF NOT EXISTS calendar_custom_holidays (
-                id SERIAL PRIMARY KEY,
-                name TEXT NOT NULL,
-                date TEXT NOT NULL,
-                type TEXT DEFAULT 'event'
-            )
-        `);
+            CREATE TABLE IF NOT EXISTS calendar_custom_holidays(
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        date TEXT NOT NULL,
+        type TEXT DEFAULT 'event'
+    )
+    `);
 
         // Filter custom holidays by year (assuming date is YYYY-MM-DD string)
-        const customRes = await client.query('SELECT * FROM calendar_custom_holidays WHERE date LIKE $1', [`${targetYear}-%`]);
+        const customRes = await client.query('SELECT * FROM calendar_custom_holidays WHERE date LIKE $1', [`${targetYear} -% `]);
         const customHolidays = customRes.rows.map(h => ({
             id: h.id,
             name: h.name,
@@ -4413,7 +4562,7 @@ app.post('/api/calendar/config', async (req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-    console.error(`[SERVER ERROR] Uncaught Exception: ${err.message}`);
+    console.error(`[SERVER ERROR]Uncaught Exception: ${err.message}`);
     console.error(err.stack);
     if (!res.headersSent) res.status(500).json({ error: 'Internal Server Error', details: err.message });
 });

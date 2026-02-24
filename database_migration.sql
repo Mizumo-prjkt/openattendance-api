@@ -202,4 +202,13 @@ BEGIN
     END IF;
 END $$;
 
+-- 21. Add Huawei Router Settings
+CREATE TABLE IF NOT EXISTS router_settings (
+    id SERIAL PRIMARY KEY,
+    router_url TEXT DEFAULT 'http://192.168.8.1/',
+    username TEXT DEFAULT 'admin',
+    password TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 COMMIT;

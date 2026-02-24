@@ -230,3 +230,12 @@ CREATE TABLE IF NOT EXISTS perf_test_barrage (id SERIAL PRIMARY KEY, val TIMESTA
 
 -- 19. Size Growth Table
 CREATE TABLE IF NOT EXISTS perf_test_size_growth (id SERIAL PRIMARY KEY, payload TEXT);
+
+-- 20. Router Settings
+CREATE TABLE IF NOT EXISTS router_settings (
+    id SERIAL PRIMARY KEY,
+    router_url TEXT DEFAULT 'http://192.168.8.1/',
+    username TEXT DEFAULT 'admin',
+    password TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

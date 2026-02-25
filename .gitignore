@@ -6,3 +6,4 @@ runtime
 database/backups
 setup
 certs
+__pycache__

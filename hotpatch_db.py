@@ -1,7 +1,6 @@
 import psycopg2
 
 def run_hotpatch():
-    # Hardcoded configuration as requested
     db_user = "admin"
     db_password = "12345678"
     db_host = "localhost"

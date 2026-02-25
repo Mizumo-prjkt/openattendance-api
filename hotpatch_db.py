@@ -481,7 +481,22 @@ CREATE TABLE IF NOT EXISTS router_settings (
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS cert_expiry_date TIMESTAMP;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_event_based BOOLEAN DEFAULT TRUE;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_id_generation BOOLEAN DEFAULT TRUE;",
-            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_sf2_generation BOOLEAN DEFAULT TRUE;"
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_sf2_generation BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_in_client TEXT;",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_in_server TIMESTAMP;",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out_client TEXT;",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out_server TIMESTAMP;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_in_client TEXT;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_in_server TIMESTAMP;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_client TEXT;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_server TIMESTAMP;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out TIMESTAMP;",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out TIMESTAMP;",
+            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_question TEXT;",
+            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_answer TEXT;",
+            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS recovery_code TEXT;",
+            "ALTER TABLE absent ALTER COLUMN staff_id DROP NOT NULL;",
+            "ALTER TABLE events ALTER COLUMN created_by_staff_id DROP NOT NULL;"
         ]
 
         for stmt in server_js_extra:

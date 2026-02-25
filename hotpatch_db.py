@@ -465,7 +465,23 @@ CREATE TABLE IF NOT EXISTS router_settings (
             "CREATE TABLE IF NOT EXISTS calendar_custom_holidays (id SERIAL PRIMARY KEY, name TEXT NOT NULL, date TEXT NOT NULL, type TEXT DEFAULT 'event');",
             "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_ip TEXT;",
             "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_password TEXT;",
-            "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS curl_config_json TEXT;"
+            "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS curl_config_json TEXT;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS db_version TEXT DEFAULT '0.0.0';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS ntp_server TEXT DEFAULT 'pool.ntp.org';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_in_start TIME DEFAULT '06:00:00';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_late_threshold TIME DEFAULT '08:00:00';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_out_target TIME DEFAULT '16:00:00';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fixed_weekday_schedule BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS strict_attendance_window BOOLEAN DEFAULT FALSE;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_source TEXT DEFAULT 'ntp';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fallback_source TEXT DEFAULT 'server';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS enable_utc_correction BOOLEAN DEFAULT true;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS auto_time_zone BOOLEAN DEFAULT true;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_zone_offset INTEGER DEFAULT 0;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS cert_expiry_date TIMESTAMP;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_event_based BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_id_generation BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_sf2_generation BOOLEAN DEFAULT TRUE;"
         ]
 
         for stmt in server_js_extra:

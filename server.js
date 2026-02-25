@@ -64,6 +64,7 @@ app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.header("Access-Control-Expose-Headers", "Content-Disposition");
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
@@ -102,7 +103,8 @@ if (!fs.existsSync(backupsDir)) {
     fs.mkdirSync(backupsDir, { recursive: true });
 }
 // Create a temporary directory for experimental files
-const tmpDir = path.join(__dirname, 'tmp');
+// Use system temp directory to prevent nodemon from restarting the server on file write
+const tmpDir = path.join(os.tmpdir(), 'openattendance_tmp');
 if (!fs.existsSync(tmpDir)) {
     fs.mkdirSync(tmpDir, { recursive: true });
 }
@@ -1798,7 +1800,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
                 s.first_name || ' ' || s.last_name as title,
                 'Checked in at ' || to_char(p.time_in, 'HH12:MI AM') as desc,
                 to_char(p.time_in, 'HH12:MI AM') as time,
-                p.time_in as raw_time,
+                to_char(p.time_in, 'YYYY-MM-DD HH24:MI:SS') as raw_time,
                 'login' as icon,
                 'text-[#146C2E]' as iconColor,
                 'bg-[#C4EED0]' as bg
@@ -2797,8 +2799,9 @@ app.get('/api/export/generate', async (req, res) => {
     const { section_id, month, format } = req.query; // month in YYYY-MM
     if (!section_id || !month) return res.status(400).json({ error: 'Missing parameters' });
 
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         // 1. Get Config & Section Details
         const configRes = await client.query('SELECT school_name, school_id, school_year FROM configurations LIMIT 1');
         const config = configRes.rows[0] || {};
@@ -3029,7 +3032,7 @@ app.get('/api/export/generate', async (req, res) => {
         debugLogWriteToFile(`[EXPORT] GENERATE ERROR: ${err.message}`);
         if (!res.headersSent) res.status(500).json({ error: err.message });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

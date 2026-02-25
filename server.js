@@ -40,6 +40,7 @@ const NTP = require('ntp-time');
 const Holidays = require('date-holidays');
 const selfsigned = require('selfsigned');
 const forge = require('node-forge');
+const huaweiLteApi = require('huawei-lte-api');
 let ZteModem;
 try {
     ZteModem = require('@zigasebenik/zte-sms');
@@ -3163,7 +3164,6 @@ app.post('/api/sms/send', async (req, res) => {
     }
 });
 // [ROUTER SYSTEM]
-const huaweiLteApi = require('huawei-lte-api');
 
 // Helper to get connected device, commented out to avoid connection during flashing
 async function getHuaweiConnection(client) {
@@ -3910,6 +3910,110 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
     }
 });
 
+// [SMS-INTERNAL-HELPER]
+// Helper function to send SMS "behind the scenes" after a scan
+async function sendSMSInternal(pool, studentData, type, recordTime) {
+    let client;
+    try {
+        client = await pool.connect();
+        
+        // 1. Get Settings
+        const settingsRes = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
+        const settings = settingsRes.rows[0];
+        if (!settings || !settings.sms_enabled) return;
+
+        // 2. Validate Recipient
+        const recipient = studentData.emergency_contact_phone;
+        if (!recipient) {
+            // debugLogWriteToFile(`[SMS] Skipped: No emergency contact for ${studentData.student_id}`);
+            return;
+        }
+
+        // 3. Prepare Message
+        const configRes = await client.query('SELECT school_name FROM configurations LIMIT 1');
+        const schoolName = configRes.rows[0]?.school_name || 'School';
+        
+        const parentName = studentData.emergency_contact_name || 'Parent/Guardian';
+        const studentName = `${studentData.first_name} ${studentData.last_name}`;
+        
+        let timeDisplay = 'Just now';
+        if (recordTime) {
+            const d = new Date(recordTime);
+            timeDisplay = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        }
+
+        let message = settings.message_template || "Student {children} has {status} at {time}.";
+        message = message.replace(/{parent_name}/g, parentName)
+                         .replace(/{campus_name}/g, schoolName)
+                         .replace(/{school_name}/g, schoolName)
+                         .replace(/{children}/g, studentName)
+                         .replace(/{time}/g, timeDisplay)
+                         .replace(/{status}/g, type === 'in' ? 'arrived' : 'left');
+
+        // 4. Send
+        let status = 'sent';
+        let errorMsg = null;
+
+        try {
+            if (settings.provider_type === 'api') {
+                // Basic API Send (Semaphore/Generic)
+                const postData = new URLSearchParams({
+                    apikey: settings.api_key,
+                    number: recipient,
+                    message: message,
+                    sendername: settings.sender_name // Optional
+                }).toString();
+
+                const urlObj = new URL(settings.api_url);
+                const options = {
+                    hostname: urlObj.hostname,
+                    path: urlObj.pathname + urlObj.search,
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Content-Length': postData.length
+                    }
+                };
+
+                await new Promise((resolve, reject) => {
+                    const req = https.request(options, (res) => {
+                        let data = '';
+                        res.on('data', chunk => data += chunk);
+                        res.on('end', () => {
+                            if (res.statusCode >= 200 && res.statusCode < 300) resolve(data);
+                            else reject(new Error(`API Status ${res.statusCode}: ${data}`));
+                        });
+                    });
+                    req.on('error', reject);
+                    req.write(postData);
+                    req.end();
+                });
+
+            } else if (settings.provider_type === 'huawei') {
+                const connection = await getHuaweiConnection(client);
+                await connection.ready;
+                const sms = new huaweiLteApi.Sms(connection);
+                await sms.sendSms([recipient], message);
+            }
+        } catch (e) {
+            status = 'failed';
+            errorMsg = e.message;
+            console.error(`[SMS] Send Failed: ${e.message}`);
+        }
+
+        // 5. Log
+        await client.query(
+            "INSERT INTO sms_logs (recipient_number, recipient_name, related_student_id, message_body, status, error_message) VALUES ($1, $2, $3, $4, $5, $6)",
+            [recipient, parentName, studentData.student_id, message, status, errorMsg]
+        );
+
+    } catch (err) {
+        console.error(`[SMS] Internal Logic Error: ${err.message}`);
+    } finally {
+        if (client) client.release();
+    }
+}
+
 // [ATTENDANCE-SCAN]
 // Kiosk Scan Endpoint
 app.post('/api/attendance/scan', async (req, res) => {
@@ -3993,7 +4097,7 @@ app.post('/api/attendance/scan', async (req, res) => {
             }
         }
 
-        const studentRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE student_id = $1", [studentIdToSearch]);
+        const studentRes = await client.query("SELECT student_id, first_name, last_name, emergency_contact_name, emergency_contact_phone FROM students WHERE student_id = $1", [studentIdToSearch]);
         if (studentRes.rows.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
@@ -4016,12 +4120,14 @@ app.post('/api/attendance/scan', async (req, res) => {
                     "INSERT INTO event_attendance (event_id, student_id, location, time_in, time_in_client, time_in_server) VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, NOW())",
                     [event_id, student.student_id, location || 'Kiosk', recordTime, client_timestamp]
                 );
+                sendSMSInternal(pool, student, 'in', recordTime || new Date()).catch(console.error);
             } else {
                 // Time Out
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
 
                 await client.query("UPDATE event_attendance SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE id = $1", [check.rows[0].id, recordTime, client_timestamp]);
+                sendSMSInternal(pool, student, 'out', recordTime || new Date()).catch(console.error);
             }
         } else {
             // Normal Mode (Daily Attendance)
@@ -4038,11 +4144,13 @@ app.post('/api/attendance/scan', async (req, res) => {
                     "INSERT INTO present (student_id, time_in, staff_id, location, time_in_client, time_in_server) VALUES ($1, COALESCE($4, NOW()), $2, $3, $5, NOW())",
                     [student.student_id, staff_id || null, location || 'Kiosk', recordTime, client_timestamp]
                 );
+                sendSMSInternal(pool, student, 'in', recordTime || new Date()).catch(console.error);
             } else {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
 
                 await client.query("UPDATE present SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE present_id = $1", [check.rows[0].present_id, recordTime, client_timestamp]);
+                sendSMSInternal(pool, student, 'out', recordTime || new Date()).catch(console.error);
             }
         }
 

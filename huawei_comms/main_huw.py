@@ -7,9 +7,14 @@ import logging
 from huawei_lte_api.Client import Client
 from huawei_lte_api.Connection import Connection
 from huawei_lte_api.AuthorizedConnection import AuthorizedConnection
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logging.basicConfig(level=logging.ERROR, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
+
+# Suppress InsecureRequestWarning for self-signed certificates on routers
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SIGNAL_LEVELS = {
     0: "     ",
@@ -44,11 +49,19 @@ def get_signal_level(rsrp):
 def main():
     parser = argparse.ArgumentParser(description="Command Line Interface for Huawei LTE API")
     
+    # Logging and Error arguments
+    parser.add_argument("--verbose", action="store_true", 
+                        help="Enable verbose logging (INFO/WARNING/ERROR)")
+    parser.add_argument("--suppress-error", action="store_true", 
+                        help="Suppress error messages")
+    parser.add_argument("--exit-to-one-if-error", action="store_true", 
+                        help="Exit with code 1 if an error occurs")
+
     # Connection arguments
     parser.add_argument("--ip-addr", default="192.168.8.1", 
                         help="IP address of the router (default: 192.168.8.1)")
-    parser.add_argument("--protocol", choices=["http", "https"], default="http", 
-                        help="Protocol to use (default: http). Note: https may not work on all routers.")
+    parser.add_argument("--protocol", default="http", 
+                        help="Protocol to use (default: http). Can be comma-separated like 'https,http' for fallback. Note: https may not work on all routers.")
     
     # Credentials arguments
     parser.add_argument("--credentials", action="store_true", 
@@ -80,6 +93,20 @@ def main():
 
     args = parser.parse_args()
 
+    if args.verbose:
+        logger.setLevel(logging.INFO)
+    elif args.suppress_error:
+        logger.setLevel(logging.CRITICAL)
+    else:
+        logger.setLevel(logging.ERROR)
+
+    original_error = logger.error
+    def exit_on_error(msg, *largs, **kwargs):
+        original_error(msg, *largs, **kwargs)
+        if args.exit_to_one_if_error:
+            sys.exit(1)
+    logger.error = exit_on_error
+
     # Validate credentials arguments
     if args.credentials:
         if not args.username or not args.password:
@@ -105,24 +132,60 @@ def main():
         if not args.target or not args.message:
             parser.error("--send-msg requires -t/--target and -m/--message")
 
-    # Build the connection URL
-    url = f"{args.protocol}://"
-    if args.credentials:
-        # URL encode credentials if they contain special chars? Often raw works, but good to note.
-        # Format: http://username:password@ip-addr/
-        url += f"{args.username}:{args.password}@"
-    url += f"{args.ip_addr}/"
+    # Parse protocols for fallback handling
+    protocols_to_try = [p.strip() for p in args.protocol.split(",") if p.strip() in ("http", "https")]
+    if not protocols_to_try:
+        logger.warning(f"Invalid protocol(s) specified: '{args.protocol}'. Defaulting to 'http'.")
+        protocols_to_try = ["http"]
+        
+    if len(protocols_to_try) > 1:
+        logger.warning(f"Multiple protocols specified ({', '.join(protocols_to_try)}). Will attempt fallback in order.")
+
+    connection = None
+    client = None
+    
+    # Try establishing connection with stacked protocols
+    for attempt_protocol in protocols_to_try:
+        # Build the connection URL
+        url = f"{attempt_protocol}://"
+        if args.credentials:
+            # Format: http://username:password@ip-addr/
+            url += f"{args.username}:{args.password}@"
+        url += f"{args.ip_addr}/"
+
+        try:
+            logger.info(f"Attempting connection via {attempt_protocol}...")
+            # Establish connection. Note: python-huawei-lte-api does not support ssl_verify natively in the constructor this way.
+            # Using standard kwargs or default session logic instead.
+            if args.credentials:
+                conn = AuthorizedConnection(url)
+            else:
+                conn = Connection(url)
+                
+            # Initialize client to see if it actually works
+            test_client = Client(conn)
+            # Make a quick lightweight call to test connection validity
+            test_client.monitoring.status()
+            
+            # If we get here, connection works
+            connection = conn
+            client = test_client
+            logger.info(f"Successfully connected via {attempt_protocol}.")
+            break
+            
+        except Exception as e:
+            logger.error(f"Failed to connect via {attempt_protocol}: {e}")
+            if connection:
+                try: # Huawei API Connection objects don't strictly require close, but good hygiene
+                    pass 
+                except:
+                    pass
+            
+    if not client:
+        logger.error("All connection attempts exhausted. Exiting.")
+        sys.exit(1)
 
     try:
-        # Establish connection
-        if args.credentials:
-            connection = AuthorizedConnection(url)
-        else:
-            connection = Connection(url)
-            
-        # Initialize client
-        client = Client(connection)
-        
         if args.dump:
             logger.info("Dumping router information...")
             try:
@@ -193,6 +256,12 @@ def main():
                 # Get signal and network info
                 signal_info = client.device.signal()
                 status_info = client.monitoring.status()
+                
+                if not isinstance(signal_info, dict):
+                    signal_info = {}
+                if not isinstance(status_info, dict):
+                    status_info = {}
+                
                 network_type_raw = str(status_info.get("CurrentNetworkType", "0"))
 
                 network_type_map = {
@@ -204,6 +273,9 @@ def main():
                     "102": "NR5G SA",
                 }
                 plmn_info = client.net.current_plmn()
+
+                if not isinstance(plmn_info, dict):
+                    plmn_info = {}
 
                 # Parse and determine values
                 rsrp = parse_dbm(signal_info.get("rsrp"))

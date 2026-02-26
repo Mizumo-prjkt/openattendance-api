@@ -4319,6 +4319,55 @@ app.post('/api/sms/huawei-python/setup', async (req, res) => {
     }
 });
 
+// Endpoint to run Huawei Script with custom args (Terminal Mode)
+app.post('/api/sms/huawei-python/run', async (req, res) => {
+    const { args } = req.body; // Expecting string, e.g., "--device-info"
+    
+    try {
+        // Get Router Settings for Auth
+        const settingsRes = await pool.query('SELECT * FROM router_settings ORDER BY id DESC LIMIT 1');
+        const settings = settingsRes.rows[0] || {};
+        
+        let routerUrl = settings.router_url || 'http://192.168.8.1/';
+        // Fix: If URL is a relative proxy path (from client-side config), fallback to default IP for backend
+        if (routerUrl.startsWith('/')) {
+            if (routerUrl.includes('secure')) {
+                routerUrl = 'https://192.168.8.1/';
+            } else {
+                routerUrl = 'http://192.168.8.1/';
+            }
+        }
+        if (!routerUrl.startsWith('http')) {
+            routerUrl = 'http://' + routerUrl;
+        }
+        const urlObj = new URL(routerUrl);
+        const protocol = urlObj.protocol.replace(':', '');
+        const ip = urlObj.hostname;
+        const username = settings.username || 'admin';
+        const password = settings.password || '';
+
+        const scriptPath = path.join(huaweiCommsDir, 'main_huw.py');
+        
+        // Determine Python Executable
+        const isWindows = os.platform() === 'win32';
+        const pythonExe = isWindows ? 'venv/Scripts/python.exe' : 'venv/bin/python';
+        const pythonPath = path.join(huaweiCommsDir, pythonExe);
+        let executable = fs.existsSync(pythonPath) ? pythonPath : 'python3';
+
+        // Construct Command
+        // We inject credentials automatically so you don't have to type them in the terminal
+        const baseArgs = `--ip-addr "${ip}" --protocol "${protocol}" --credentials -u "${username}" -p "${password}"`;
+        const command = `"${executable}" "${scriptPath}" ${baseArgs} ${args}`;
+        
+        debugLogWriteToFile(`[Huawei-Python] Terminal Command: ${command}`);
+        const { stdout, stderr } = await execPromise(command);
+        
+        res.json({ success: true, stdout, stderr });
+    } catch (err) {
+        res.status(500).json({ error: err.message, stdout: err.stdout, stderr: err.stderr });
+    }
+});
+
 // Helper to execute Huawei Python Script
 async function sendHuaweiPythonSms(client, recipient, message) {
     // Get Router Settings
@@ -4328,7 +4377,19 @@ async function sendHuaweiPythonSms(client, recipient, message) {
         throw new Error("Router settings not configured.");
     }
 
-    const urlObj = new URL(settings.router_url);
+    let routerUrl = settings.router_url;
+    // Fix: If URL is a relative proxy path (from client-side config), fallback to default IP for backend
+    if (routerUrl.startsWith('/')) {
+        if (routerUrl.includes('secure')) {
+            routerUrl = 'https://192.168.8.1/';
+        } else {
+            routerUrl = 'http://192.168.8.1/';
+        }
+    }
+    if (!routerUrl.startsWith('http')) {
+        routerUrl = 'http://' + routerUrl;
+    }
+    const urlObj = new URL(routerUrl);
     const protocol = urlObj.protocol.replace(':', '');
     const ip = urlObj.hostname;
     const username = settings.username || 'admin';

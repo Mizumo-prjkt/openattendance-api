@@ -7,6 +7,7 @@
     "debug-server": "nodemon server.js --debug"
   },
   "dependencies": {
+    "@jupyterlab/terminal": "^4.5.5",
     "@zigasebenik/zte-sms": "github:sebenik/zte-sms",
     "archive": "^0.0.2",
     "archiver": "^7.0.1",
@@ -20,6 +21,7 @@
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-session": "^1.18.2",
+    "ghostty-web": "^0.4.0",
     "html5-qrcode": "^2.3.8",
     "https": "^1.0.0",
     "huawei-lte-api": "^0.1.1",

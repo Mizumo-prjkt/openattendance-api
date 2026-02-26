@@ -3481,6 +3481,8 @@ app.post('/api/sms/send', async (req, res) => {
                 await connection.ready;
                 const sms = new huaweiLteApi.Sms(connection);
                 await sms.sendSms([recipient_number], message_body);
+            } else if (settings.provider_type === 'huawei_python') {
+                await sendHuaweiPythonSms(client, recipient_number, message_body);
             }
         }
 
@@ -4287,6 +4289,77 @@ app.post('/api/debug/network-test', async (req, res) => {
     }
 });
 
+// [HUAWEI PYTHON COMMS]
+const huaweiCommsDir = path.join(__dirname, 'huawei_comms');
+
+// Endpoint to setup python env
+app.post('/api/sms/huawei-python/setup', async (req, res) => {
+    try {
+        if (!fs.existsSync(huaweiCommsDir)) {
+            return res.status(404).json({ error: "huawei_comms directory not found." });
+        }
+        
+        // Check if venv exists
+        const venvPath = path.join(huaweiCommsDir, 'venv');
+        if (fs.existsSync(venvPath)) {
+             return res.json({ success: true, message: "Environment already exists." });
+        }
+
+        // Run setup
+        const isWindows = os.platform() === 'win32';
+        const command = isWindows ? 'python -m venv venv && venv\\Scripts\\pip install -r requirements.txt' : 'bash environgen.sh';
+        
+        debugLogWriteToFile(`[Huawei-Python] Setting up environment...`);
+        await execPromise(command, { cwd: huaweiCommsDir });
+        
+        res.json({ success: true, message: "Environment setup complete." });
+    } catch (err) {
+        debugLogWriteToFile(`[Huawei-Python] Setup failed: ${err.message}`);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Helper to execute Huawei Python Script
+async function sendHuaweiPythonSms(client, recipient, message) {
+    // Get Router Settings
+    const res = await client.query('SELECT * FROM router_settings ORDER BY id DESC LIMIT 1');
+    const settings = res.rows[0];
+    if (!settings || !settings.router_url) {
+        throw new Error("Router settings not configured.");
+    }
+
+    const urlObj = new URL(settings.router_url);
+    const protocol = urlObj.protocol.replace(':', '');
+    const ip = urlObj.hostname;
+    const username = settings.username || 'admin';
+    const password = settings.password;
+
+    const scriptPath = path.join(huaweiCommsDir, 'main_huw.py');
+    
+    // Determine Python Executable (venv)
+    const isWindows = os.platform() === 'win32';
+    const pythonExe = isWindows ? 'venv/Scripts/python.exe' : 'venv/bin/python';
+    const pythonPath = path.join(huaweiCommsDir, pythonExe);
+
+    let executable = pythonPath;
+    if (!fs.existsSync(pythonPath)) {
+         console.warn("[Huawei-Python] Venv not found at " + pythonPath + ", trying system python...");
+         executable = 'python3'; 
+    }
+
+    // Construct Args
+    // Escape quotes in message for shell safety
+    const safeMessage = message.replace(/"/g, '\\"');
+    
+    const command = `"${executable}" "${scriptPath}" --ip-addr "${ip}" --protocol "${protocol}" --credentials -u "${username}" -p "${password}" --send-msg -t "${recipient}" -m "${safeMessage}"`;
+    
+    debugLogWriteToFile(`[Huawei-Python] Executing script...`);
+    const { stdout, stderr } = await execPromise(command);
+    
+    if (stderr) console.warn(`[Huawei-Python] Stderr: ${stderr}`);
+    return stdout;
+}
+
 // [SMS-INTERNAL-HELPER]
 // Helper function to send SMS "behind the scenes" after a scan
 async function sendSMSInternal(pool, studentData, type, recordTime) {
@@ -4379,6 +4452,8 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
                 await connection.ready;
                 const sms = new huaweiLteApi.Sms(connection);
                 await sms.sendSms([recipient], message);
+            } else if (settings.provider_type === 'huawei_python') {
+                await sendHuaweiPythonSms(client, recipient, message);
             }
         } catch (e) {
             status = 'failed';

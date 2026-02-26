@@ -40,7 +40,12 @@ const NTP = require('ntp-time');
 const Holidays = require('date-holidays');
 const selfsigned = require('selfsigned');
 const forge = require('node-forge');
-const huaweiLteApi = require('huawei-lte-api');
+let huaweiLteApi;
+try {
+    huaweiLteApi = require('huawei-lte-api');
+} catch (e) {
+    console.log("[SMS] Optional dependency huawei-lte-api not found. Huawei router features will be disabled.");
+}
 let ZteModem;
 try {
     ZteModem = require('@zigasebenik/zte-sms');
@@ -1037,6 +1042,195 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_client TEXT");
                 await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_server TIMESTAMP");
 
+                // 19. Test Mode
+                await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS test_mode BOOLEAN DEFAULT FALSE");
+
+                // 21. Event Time Precision (Client Raw Strings)
+                await hotfixClient.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time_client TEXT");
+                await hotfixClient.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS end_time_client TEXT");
+                await hotfixClient.query("ALTER TABLE testing_events ADD COLUMN IF NOT EXISTS start_time_client TEXT");
+                await hotfixClient.query("ALTER TABLE testing_events ADD COLUMN IF NOT EXISTS end_time_client TEXT");
+
+                // 19. Fix Foreign Keys for Student ID Updates (ON UPDATE CASCADE)
+                // We drop and recreate constraints to ensure they propagate ID changes
+                const tablesToFixFK = [
+                    { table: 'absent', constraint: 'absent_student_id_fkey', col: 'student_id' },
+                    { table: 'present', constraint: 'present_student_id_fkey', col: 'student_id' },
+                    { table: 'excused', constraint: 'excused_student_id_fkey', col: 'student_id' },
+                    { table: 'sms_logs', constraint: 'sms_logs_related_student_id_fkey', col: 'related_student_id' },
+                    { table: 'event_attendance', constraint: 'event_attendance_student_id_fkey', col: 'student_id', extra: 'ON DELETE CASCADE' }
+                ];
+
+                for (const t of tablesToFixFK) {
+                    await hotfixClient.query(`ALTER TABLE ${t.table} DROP CONSTRAINT IF EXISTS ${t.constraint}`);
+                    await hotfixClient.query(`ALTER TABLE ${t.table} ADD CONSTRAINT ${t.constraint} FOREIGN KEY (${t.col}) REFERENCES students(student_id) ON UPDATE CASCADE ${t.extra || ''}`);
+                }
+
+                // 20. Test Mode Tables (Isolated Environment)
+                const testTablesSql = [
+                    `CREATE TABLE IF NOT EXISTS testing_configurations (
+                        config_id SERIAL PRIMARY KEY,
+                        school_name TEXT NOT NULL,
+                        school_type TEXT,
+                        school_id TEXT,
+                        address TEXT,
+                        logo_directory TEXT,
+                        organization_hotline TEXT,
+                        country_code TEXT NOT NULL,
+                        created_config_date TEXT,
+                        principal_name TEXT,
+                        principal_title TEXT DEFAULT 'School Principal',
+                        school_year TEXT DEFAULT '2026-2027',
+                        fixed_weekday_schedule BOOLEAN DEFAULT TRUE,
+                        time_source TEXT DEFAULT 'ntp',
+                        time_zone_offset INTEGER DEFAULT 0,
+                        auto_time_zone BOOLEAN DEFAULT TRUE,
+                        ntp_server TEXT DEFAULT 'pool.ntp.org',
+                        enable_utc_correction BOOLEAN DEFAULT TRUE,
+                        fallback_source TEXT DEFAULT 'server',
+                        maintenance_mode BOOLEAN DEFAULT FALSE,
+                        time_in_start TIME DEFAULT '06:00:00',
+                        time_late_threshold TIME DEFAULT '08:00:00',
+                        time_out_target TIME DEFAULT '16:00:00',
+                        strict_attendance_window BOOLEAN DEFAULT FALSE,
+                        cert_expiry_date TIMESTAMP,
+                        feature_event_based BOOLEAN DEFAULT TRUE,
+                        feature_id_generation BOOLEAN DEFAULT TRUE,
+                        feature_sf2_generation BOOLEAN DEFAULT TRUE,
+                        db_version TEXT DEFAULT '0.0.0'
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_students (
+                        id SERIAL PRIMARY KEY,
+                        last_name TEXT,
+                        first_name TEXT NOT NULL,
+                        middle_name TEXT,
+                        phone_number TEXT,
+                        address TEXT,
+                        emergency_contact_name TEXT,
+                        emergency_contact_phone TEXT,
+                        emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian')),
+                        student_id TEXT NOT NULL UNIQUE,
+                        qr_code_token TEXT UNIQUE,
+                        profile_image_path TEXT,
+                        classroom_section TEXT,
+                        status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive')),
+                        gender TEXT CHECK (gender IN ('Male', 'Female', 'Other'))
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_sections (
+                        section_id SERIAL PRIMARY KEY,
+                        section_name TEXT NOT NULL UNIQUE,
+                        adviser_staff_id TEXT,
+                        room_number TEXT,
+                        grade_level INTEGER,
+                        strand TEXT,
+                        schedule_data JSONB,
+                        allowed_days TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_events (
+                        event_id SERIAL PRIMARY KEY,
+                        event_name TEXT NOT NULL,
+                        event_description TEXT,
+                        location TEXT,
+                        start_datetime TIMESTAMP NOT NULL,
+                        end_datetime TIMESTAMP NOT NULL,
+                        status TEXT DEFAULT 'planned' CHECK (status IN ('planned', 'ongoing', 'completed', 'cancelled')),
+                        created_by_staff_id TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        attendee_count INTEGER DEFAULT 0,
+                        event_type TEXT,
+                        event_hash TEXT,
+                        secure_mode BOOLEAN DEFAULT FALSE,
+                        FOREIGN KEY (created_by_staff_id) REFERENCES staff_accounts(staff_id)
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_event_staff (
+                        id SERIAL PRIMARY KEY,
+                        event_id INTEGER NOT NULL,
+                        staff_id TEXT NOT NULL,
+                        role TEXT DEFAULT 'Staff',
+                        assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE,
+                        FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE CASCADE,
+                        UNIQUE(event_id, staff_id)
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_event_attendance (
+                        id SERIAL PRIMARY KEY,
+                        event_id INTEGER NOT NULL,
+                        student_id TEXT NOT NULL,
+                        time_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        time_out TIMESTAMP,
+                        location TEXT,
+                        time_in_client TEXT,
+                        time_in_server TIMESTAMP,
+                        time_out_client TEXT,
+                        time_out_server TIMESTAMP,
+                        FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE,
+                        FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON DELETE CASCADE ON UPDATE CASCADE
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_event_notes (
+                        note_id SERIAL PRIMARY KEY,
+                        event_id INTEGER NOT NULL,
+                        staff_id TEXT,
+                        note_content TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE,
+                        FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_present (
+                        present_id SERIAL PRIMARY KEY,
+                        student_id TEXT NOT NULL,
+                        staff_id TEXT NOT NULL,
+                        time_in TIMESTAMP NOT NULL,
+                        time_out TIMESTAMP,
+                        location TEXT,
+                        time_in_client TEXT,
+                        time_in_server TIMESTAMP,
+                        time_out_client TEXT,
+                        time_out_server TIMESTAMP,
+                        FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE,
+                        FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_absent (
+                        absent_id SERIAL PRIMARY KEY,
+                        student_id TEXT NOT NULL,
+                        staff_id TEXT,
+                        reason TEXT,
+                        absent_datetime TIMESTAMP NOT NULL,
+                        FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE,
+                        FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id)
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_excused (
+                        excused_id SERIAL PRIMARY KEY,
+                        student_id TEXT NOT NULL,
+                        requester_staff_id TEXT NOT NULL,
+                        processor_id TEXT,
+                        processor_type TEXT,
+                        reason TEXT NOT NULL,
+                        request_datetime TIMESTAMP NOT NULL,
+                        verdict_datetime TIMESTAMP,
+                        result TEXT DEFAULT 'pending',
+                        FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE,
+                        FOREIGN KEY (requester_staff_id) REFERENCES staff_accounts(staff_id)
+                    )`,
+                    `CREATE TABLE IF NOT EXISTS testing_sms_logs (
+                        sms_id SERIAL PRIMARY KEY,
+                        recipient_number TEXT NOT NULL,
+                        recipient_name TEXT,
+                        related_student_id TEXT,
+                        message_body TEXT NOT NULL,
+                        status TEXT,
+                        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        error_message TEXT,
+                        FOREIGN KEY (related_student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE
+                    )`
+                ];
+
+                for (const sql of testTablesSql) {
+                    await hotfixClient.query(sql);
+                }
+
                 // Ensure default calendar config
                 const calConfigCheck = await hotfixClient.query('SELECT 1 FROM calendar_config LIMIT 1');
                 if (calConfigCheck.rows.length === 0) {
@@ -1304,6 +1498,11 @@ app.get('/api/benchmark/read-all', (req, res) => {
 app.get('/api/students/list', async (req, res) => {
     const client = await pool.connect();
     try {
+        // Check Test Mode
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const tableName = isTestMode ? 'testing_students' : 'students';
+
         const query = `
             SELECT 
                 id, 
@@ -1317,7 +1516,7 @@ app.get('/api/students/list', async (req, res) => {
                 emergency_contact_phone,
                 emergency_contact_relationship,
                 profile_image_path as profile_image 
-            FROM students 
+            FROM ${tableName} 
             ORDER BY last_name ASC
         `;
         const result = await client.query(query);
@@ -1336,6 +1535,11 @@ app.get('/api/events/attendance/:event_id', async (req, res) => {
     const { event_id } = req.params;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventAttendanceTable = isTestMode ? 'testing_event_attendance' : 'event_attendance';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+
         const query = `
             SELECT 
                 ea.id, 
@@ -1347,8 +1551,8 @@ app.get('/api/events/attendance/:event_id', async (req, res) => {
                 s.last_name,
                 s.classroom_section as section,
                 s.profile_image_path as profile_image
-            FROM event_attendance ea
-            JOIN students s ON ea.student_id = s.student_id
+            FROM ${eventAttendanceTable} ea
+            JOIN ${studentsTable} s ON ea.student_id = s.student_id
             WHERE ea.event_id = $1
             ORDER BY ea.time_in DESC
         `;
@@ -1367,7 +1571,11 @@ app.post('/api/events/attendance/add', async (req, res) => {
     const { event_id, student_id, location, time_in } = req.body;
     const client = await pool.connect();
     try {
-        const query = `INSERT INTO event_attendance (event_id, student_id, location, time_in) VALUES ($1, $2, $3, $4)`;
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventAttendanceTable = isTestMode ? 'testing_event_attendance' : 'event_attendance';
+
+        const query = `INSERT INTO ${eventAttendanceTable} (event_id, student_id, location, time_in) VALUES ($1, $2, $3, $4)`;
         await client.query(query, [event_id, student_id, location || 'Manual', time_in || new Date()]);
         res.json({ success: true });
     } catch (err) {
@@ -1385,9 +1593,13 @@ app.get('/api/events/staff/:event_id', async (req, res) => {
     const { event_id } = req.params;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventStaffTable = isTestMode ? 'testing_event_staff' : 'event_staff';
+
         const query = `
             SELECT es.id, es.event_id, es.staff_id, es.role, es.assigned_at, sa.name, sa.email_address, sa.profile_image_path as profile_image
-            FROM event_staff es
+            FROM ${eventStaffTable} es
             JOIN staff_accounts sa ON es.staff_id = sa.staff_id
             WHERE es.event_id = $1
             ORDER BY sa.name ASC
@@ -1407,7 +1619,11 @@ app.post('/api/events/staff/add', async (req, res) => {
     const { event_id, staff_id, role } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('INSERT INTO event_staff (event_id, staff_id, role) VALUES ($1, $2, $3)', [event_id, staff_id, role || 'Staff']);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventStaffTable = isTestMode ? 'testing_event_staff' : 'event_staff';
+
+        await client.query(`INSERT INTO ${eventStaffTable} (event_id, staff_id, role) VALUES ($1, $2, $3)`, [event_id, staff_id, role || 'Staff']);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENT STAFF] ADD ERROR: ${err.message}`);
@@ -1422,7 +1638,11 @@ app.delete('/api/events/staff/delete', async (req, res) => {
     const { event_id, staff_id } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('DELETE FROM event_staff WHERE event_id = $1 AND staff_id = $2', [event_id, staff_id]);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventStaffTable = isTestMode ? 'testing_event_staff' : 'event_staff';
+
+        await client.query(`DELETE FROM ${eventStaffTable} WHERE event_id = $1 AND staff_id = $2`, [event_id, staff_id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENT STAFF] DELETE ERROR: ${err.message}`);
@@ -1438,6 +1658,11 @@ app.post('/api/students/add', async (req, res) => {
     const { student_id, first_name, last_name, section, gender, status, profile_image, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship } = req.body;
     const client = await pool.connect();
     try {
+        // Check Test Mode
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const tableName = isTestMode ? 'testing_students' : 'students';
+
         await client.query('BEGIN');
 
         // Sanitize & Trim Inputs
@@ -1474,7 +1699,7 @@ app.post('/api/students/add', async (req, res) => {
 
         const qr_code_token = crypto.randomUUID();
         const query = `
-            INSERT INTO students (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token)
+            INSERT INTO ${tableName} (student_id, first_name, last_name, classroom_section, status, gender, profile_image_path, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, qr_code_token)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
         `;
@@ -1497,6 +1722,11 @@ app.put('/api/students/update', async (req, res) => {
     const { id, student_id, first_name, last_name, section, gender, status, profile_image, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship } = req.body;
     const client = await pool.connect();
     try {
+        // Check Test Mode
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const tableName = isTestMode ? 'testing_students' : 'students';
+
         await client.query('BEGIN');
 
         // Sanitize & Trim Inputs
@@ -1533,7 +1763,7 @@ app.put('/api/students/update', async (req, res) => {
         }
 
         const query = `
-            UPDATE students 
+            UPDATE ${tableName} 
             SET student_id = $1, first_name = $2, last_name = $3, classroom_section = $4, gender = $5, status = $6, profile_image_path = $7, emergency_contact_name = $8, emergency_contact_phone = $9, emergency_contact_relationship = $10
             WHERE id = $11
         `;
@@ -1554,7 +1784,11 @@ app.delete('/api/students/delete', async (req, res) => {
     const { id } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('DELETE FROM students WHERE id = $1', [id]);
+        // Check Test Mode
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const tableName = isTestMode ? 'testing_students' : 'students';
+        await client.query(`DELETE FROM ${tableName} WHERE id = $1`, [id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[STUDENTS] DELETE ERROR: ${err.message}`);
@@ -2039,6 +2273,11 @@ app.get('/api/students/stats/:student_id', async (req, res) => {
 app.get('/api/sections/list', async (req, res) => {
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+
         const query = `
             SELECT 
                 s.section_id as id,
@@ -2050,8 +2289,8 @@ app.get('/api/sections/list', async (req, res) => {
                 s.strand,
                 s.schedule_data,
                 s.allowed_days,
-                (SELECT COUNT(*)::int FROM students st WHERE st.classroom_section = s.section_name AND st.status = 'Active') as student_count
-            FROM sections s
+                (SELECT COUNT(*)::int FROM ${studentsTable} st WHERE st.classroom_section = s.section_name AND st.status = 'Active') as student_count
+            FROM ${sectionsTable} s
             LEFT JOIN staff_accounts sa ON s.adviser_staff_id = sa.staff_id
             ORDER BY s.section_name ASC
         `;
@@ -2083,7 +2322,13 @@ app.get('/api/sections/stats/:section_id', async (req, res) => {
     const { section_id } = req.params;
     const client = await pool.connect();
     try {
-        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+
+        const secRes = await client.query(`SELECT section_name FROM ${sectionsTable} WHERE section_id = $1`, [section_id]);
         if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
         const sectionName = secRes.rows[0].section_name;
 
@@ -2091,8 +2336,8 @@ app.get('/api/sections/stats/:section_id', async (req, res) => {
             SELECT 
                 to_char(p.time_in, 'YYYY-MM-DD') as date,
                 COUNT(DISTINCT p.student_id)::int as count
-            FROM present p
-            JOIN students s ON p.student_id = s.student_id
+            FROM ${presentTable} p
+            JOIN ${studentsTable} s ON p.student_id = s.student_id
             WHERE s.classroom_section = $1
             AND p.time_in > CURRENT_DATE - INTERVAL '1 year'
             GROUP BY to_char(p.time_in, 'YYYY-MM-DD')
@@ -2112,8 +2357,12 @@ app.post('/api/sections/add', async (req, res) => {
     const { name, adviser_id, room, grade_level, strand, schedule } = req.body;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+
         const query = `
-            INSERT INTO sections (section_name, adviser_staff_id, room_number, grade_level, strand, schedule_data, allowed_days)
+            INSERT INTO ${sectionsTable} (section_name, adviser_staff_id, room_number, grade_level, strand, schedule_data, allowed_days)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING section_id
         `;
@@ -2131,8 +2380,12 @@ app.put('/api/sections/update', async (req, res) => {
     const { id, name, adviser_id, room, grade_level, strand, schedule } = req.body;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+
         const query = `
-            UPDATE sections
+            UPDATE ${sectionsTable}
             SET section_name = $1, adviser_staff_id = $2, room_number = $3, grade_level = $4, strand = $5, schedule_data = $6, allowed_days = $7
             WHERE section_id = $8
         `;
@@ -2150,7 +2403,11 @@ app.delete('/api/sections/delete', async (req, res) => {
     const { id } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('DELETE FROM sections WHERE section_id = $1', [id]);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+
+        await client.query(`DELETE FROM ${sectionsTable} WHERE section_id = $1`, [id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[SECTIONS] DELETE ERROR: ${err.message}`);
@@ -2169,15 +2426,22 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
 
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+        const absentTable = isTestMode ? 'testing_absent' : 'absent';
+
         // 1. Get Section Name
-        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        const secRes = await client.query(`SELECT section_name FROM ${sectionsTable} WHERE section_id = $1`, [section_id]);
         if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
         const sectionName = secRes.rows[0].section_name;
 
         // 2. Get All Active Students in Section
         const studentsRes = await client.query(`
             SELECT student_id, last_name, first_name, profile_image_path, gender
-            FROM students 
+            FROM ${studentsTable} 
             WHERE classroom_section = $1 AND status = 'Active'
             ORDER BY last_name ASC
         `, [sectionName]);
@@ -2188,7 +2452,7 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
         // Present
         const presentRes = await client.query(`
             SELECT student_id, time_in, time_out
-            FROM present 
+            FROM ${presentTable} 
             WHERE time_in::date = $1::date
         `, [date]);
 
@@ -2217,7 +2481,7 @@ app.get('/api/sections/attendance/:section_id', async (req, res) => {
         // Absent (Manual)
         const absentRes = await client.query(`
             SELECT student_id, reason 
-            FROM absent 
+            FROM ${absentTable} 
             WHERE absent_datetime::date = $1::date
         `, [date]);
         const absentMap = {};
@@ -2433,6 +2697,10 @@ app.put('/api/staff/change-password', async (req, res) => {
 app.get('/api/events/list', async (req, res) => {
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventsTable = isTestMode ? 'testing_events' : 'events';
+
         const query = `
             SELECT 
                 event_id as id,
@@ -2444,8 +2712,10 @@ app.get('/api/events/list', async (req, res) => {
                 status,
                 attendee_count,
                 event_hash,
-                secure_mode
-            FROM events 
+                secure_mode,
+                start_time_client,
+                end_time_client
+            FROM ${eventsTable} 
             ORDER BY start_datetime DESC
         `;
         const result = await client.query(query);
@@ -2460,15 +2730,19 @@ app.get('/api/events/list', async (req, res) => {
 
 // Add event
 app.post('/api/events/add', async (req, res) => {
-    const { name, type, location, start, end, status, created_by, event_hash, secure_mode } = req.body;
+    const { name, type, location, start, end, status, created_by, event_hash, secure_mode, start_client, end_client } = req.body;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventsTable = isTestMode ? 'testing_events' : 'events';
+
         const query = `
-            INSERT INTO events (event_name, event_type, location, start_datetime, end_datetime, status, created_by_staff_id, event_hash, secure_mode)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO ${eventsTable} (event_name, event_type, location, start_datetime, end_datetime, status, created_by_staff_id, event_hash, secure_mode, start_time_client, end_time_client)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING event_id
         `;
-        await client.query(query, [name, type, location, start, end, status || 'planned', created_by || null, event_hash || null, secure_mode || false]);
+        await client.query(query, [name, type, location, start, end, status || 'planned', created_by || null, event_hash || null, secure_mode || false, start_client || null, end_client || null]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENTS] ADD ERROR: ${err.message}`);
@@ -2480,15 +2754,19 @@ app.post('/api/events/add', async (req, res) => {
 
 // Update event
 app.put('/api/events/update', async (req, res) => {
-    const { id, name, type, location, start, end, status, event_hash, secure_mode } = req.body;
+    const { id, name, type, location, start, end, status, event_hash, secure_mode, start_client, end_client } = req.body;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventsTable = isTestMode ? 'testing_events' : 'events';
+
         const query = `
-            UPDATE events
-            SET event_name = $1, event_type = $2, location = $3, start_datetime = $4, end_datetime = $5, status = $6, event_hash = $7, secure_mode = $8
-            WHERE event_id = $9
+            UPDATE ${eventsTable}
+            SET event_name = $1, event_type = $2, location = $3, start_datetime = $4, end_datetime = $5, status = $6, event_hash = $7, secure_mode = $8, start_time_client = $9, end_time_client = $10
+            WHERE event_id = $11
         `;
-        await client.query(query, [name, type, location, start, end, status, event_hash, secure_mode, id]);
+        await client.query(query, [name, type, location, start, end, status, event_hash, secure_mode, start_client || null, end_client || null, id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENTS] UPDATE ERROR: ${err.message}`);
@@ -2503,7 +2781,11 @@ app.delete('/api/events/delete', async (req, res) => {
     const { id } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('DELETE FROM events WHERE event_id = $1', [id]);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventsTable = isTestMode ? 'testing_events' : 'events';
+
+        await client.query(`DELETE FROM ${eventsTable} WHERE event_id = $1`, [id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENTS] DELETE ERROR: ${err.message}`);
@@ -2519,9 +2801,13 @@ app.get('/api/events/notes/:event_id', async (req, res) => {
     const { event_id } = req.params;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventNotesTable = isTestMode ? 'testing_event_notes' : 'event_notes';
+
         const query = `
             SELECT en.note_id, en.event_id, en.staff_id, en.note_content, en.created_at, sa.name as staff_name
-            FROM event_notes en
+            FROM ${eventNotesTable} en
             LEFT JOIN staff_accounts sa ON en.staff_id = sa.staff_id
             WHERE en.event_id = $1
             ORDER BY en.created_at DESC
@@ -2541,7 +2827,11 @@ app.post('/api/events/notes/add', async (req, res) => {
     const { event_id, staff_id, content } = req.body;
     const client = await pool.connect();
     try {
-        const query = `INSERT INTO event_notes (event_id, staff_id, note_content) VALUES ($1, $2, $3)`;
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventNotesTable = isTestMode ? 'testing_event_notes' : 'event_notes';
+
+        const query = `INSERT INTO ${eventNotesTable} (event_id, staff_id, note_content) VALUES ($1, $2, $3)`;
         await client.query(query, [event_id, staff_id, content]);
         res.json({ success: true });
     } catch (err) {
@@ -2557,7 +2847,11 @@ app.delete('/api/events/notes/delete', async (req, res) => {
     const { note_id } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('DELETE FROM event_notes WHERE note_id = $1', [note_id]);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventNotesTable = isTestMode ? 'testing_event_notes' : 'event_notes';
+
+        await client.query(`DELETE FROM ${eventNotesTable} WHERE note_id = $1`, [note_id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENT NOTES] DELETE ERROR: ${err.message}`);
@@ -2573,7 +2867,11 @@ app.delete('/api/events/attendance/delete', async (req, res) => {
     const { id } = req.body;
     const client = await pool.connect();
     try {
-        await client.query('DELETE FROM event_attendance WHERE id = $1', [id]);
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const eventAttendanceTable = isTestMode ? 'testing_event_attendance' : 'event_attendance';
+
+        await client.query(`DELETE FROM ${eventAttendanceTable} WHERE id = $1`, [id]);
         res.json({ success: true });
     } catch (err) {
         debugLogWriteToFile(`[EVENT ATTENDANCE] DELETE ERROR: ${err.message}`);
@@ -2590,17 +2888,19 @@ app.get('/api/events/export-tickets/:event_id', async (req, res) => {
     const client = await pool.connect();
 
     try {
+        const configRes = await client.query("SELECT test_mode, school_year FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const schoolYear = configRes.rows[0]?.school_year || '';
+        const eventsTable = isTestMode ? 'testing_events' : 'events';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+
         // 1. Get Event Details
-        const eventRes = await client.query('SELECT event_name, event_hash, secure_mode FROM events WHERE event_id = $1', [event_id]);
+        const eventRes = await client.query(`SELECT event_name, event_hash, secure_mode FROM ${eventsTable} WHERE event_id = $1`, [event_id]);
         if (eventRes.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
         const event = eventRes.rows[0];
 
-        // 1.5 Get School Year
-        const configRes = await client.query('SELECT school_year FROM configurations LIMIT 1');
-        const schoolYear = configRes.rows[0]?.school_year || '';
-
         // 2. Get Active Students
-        const studentsRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE status = 'Active'");
+        const studentsRes = await client.query(`SELECT student_id, first_name, last_name FROM ${studentsTable} WHERE status = 'Active'`);
         const students = studentsRes.rows;
 
         // 3. Setup Zip Stream
@@ -2644,17 +2944,19 @@ app.get('/api/sections/export-tickets/:section_id', async (req, res) => {
     const { section_id } = req.params;
     const client = await pool.connect();
     try {
+        const configRes = await client.query("SELECT test_mode, school_year FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const schoolYear = configRes.rows[0]?.school_year || '';
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+
         // 1. Get Section Name
-        const secRes = await client.query('SELECT section_name FROM sections WHERE section_id = $1', [section_id]);
+        const secRes = await client.query(`SELECT section_name FROM ${sectionsTable} WHERE section_id = $1`, [section_id]);
         if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
         const sectionName = secRes.rows[0].section_name;
 
-        // 1.5 Get School Year
-        const configRes = await client.query('SELECT school_year FROM configurations LIMIT 1');
-        const schoolYear = configRes.rows[0]?.school_year || '';
-
         // 2. Get Students
-        const studentsRes = await client.query("SELECT student_id, first_name, last_name FROM students WHERE classroom_section = $1 AND status = 'Active'", [sectionName]);
+        const studentsRes = await client.query(`SELECT student_id, first_name, last_name FROM ${studentsTable} WHERE classroom_section = $1 AND status = 'Active'`, [sectionName]);
         const students = studentsRes.rows;
 
         // 3. Zip
@@ -2690,18 +2992,23 @@ app.get('/api/reports/daily', async (req, res) => {
         const end = end_date || new Date().toISOString().split('T')[0];
         const start = start_date || new Date(Date.now() - 30 * 24 * 60 * 1000).toISOString().split('T')[0];
 
-        const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
+        const configRes = await client.query("SELECT time_late_threshold, test_mode FROM configurations LIMIT 1");
         const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
+        const isTestMode = configRes.rows[0]?.test_mode;
+
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+        const absentTable = isTestMode ? 'testing_absent' : 'absent';
 
         const query = `
             SELECT
                 to_char(d, 'YYYY-MM-DD') as date,
-                (SELECT COUNT(*) FROM students WHERE status = 'Active') as total,
+                (SELECT COUNT(*) FROM ${studentsTable} WHERE status = 'Active') as total,
                 COALESCE(COUNT(DISTINCT p.student_id), 0)::int as present,
-                (SELECT COUNT(*) FROM absent a WHERE a.absent_datetime::date = d::date)::int as absent,
+                (SELECT COUNT(*) FROM ${absentTable} a WHERE a.absent_datetime::date = d::date)::int as absent,
                 COALESCE(COUNT(DISTINCT CASE WHEN p.time_in::time > $3 THEN p.student_id END), 0)::int as late
             FROM generate_series($1::date, $2::date, '1 day') d
-            LEFT JOIN present p ON p.time_in::date = d::date
+            LEFT JOIN ${presentTable} p ON p.time_in::date = d::date
             GROUP BY d
             ORDER BY d DESC
         `;
@@ -2726,6 +3033,11 @@ app.get('/api/export/permissions', async (req, res) => {
 
     const client = await pool.connect();
     try {
+        // Check Test Mode
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+
         // 1. Get Staff Role
         const staffRes = await client.query('SELECT staff_type FROM staff_accounts WHERE staff_id = $1', [staff_id]);
         if (staffRes.rows.length === 0) return res.status(404).json({ error: 'Staff not found' });
@@ -2736,11 +3048,11 @@ app.get('/api/export/permissions', async (req, res) => {
         // 2. Get Sections based on role
         if (role === 'teacher') {
             // Only advised sections
-            const secRes = await client.query('SELECT section_id as id, section_name as name FROM sections WHERE adviser_staff_id = $1 ORDER BY section_name', [staff_id]);
+            const secRes = await client.query(`SELECT section_id as id, section_name as name FROM ${sectionsTable} WHERE adviser_staff_id = $1 ORDER BY section_name`, [staff_id]);
             sections = secRes.rows;
         } else {
             // Admin/Staff/Security/StudentCouncil - All sections
-            const secRes = await client.query('SELECT section_id as id, section_name as name FROM sections ORDER BY section_name');
+            const secRes = await client.query(`SELECT section_id as id, section_name as name FROM ${sectionsTable} ORDER BY section_name`);
             sections = secRes.rows;
         }
 
@@ -2804,10 +3116,15 @@ app.get('/api/export/generate', async (req, res) => {
     try {
         client = await pool.connect();
         // 1. Get Config & Section Details
-        const configRes = await client.query('SELECT school_name, school_id, school_year FROM configurations LIMIT 1');
+        const configRes = await client.query('SELECT school_name, school_id, school_year, test_mode FROM configurations LIMIT 1');
         const config = configRes.rows[0] || {};
 
-        const secRes = await client.query('SELECT section_name, grade_level FROM sections WHERE section_id = $1', [section_id]);
+        const isTestMode = config.test_mode;
+        const sectionsTable = isTestMode ? 'testing_sections' : 'sections';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+
+        const secRes = await client.query(`SELECT section_name, grade_level FROM ${sectionsTable} WHERE section_id = $1`, [section_id]);
         if (secRes.rows.length === 0) return res.status(404).json({ error: 'Section not found' });
         const section = secRes.rows[0];
         const sectionName = section.section_name;
@@ -2815,7 +3132,7 @@ app.get('/api/export/generate', async (req, res) => {
         // 2. Get Students in Section
         const studentsRes = await client.query(`
             SELECT student_id, last_name, first_name, gender 
-            FROM students 
+            FROM ${studentsTable} 
             WHERE classroom_section = $1 AND status = 'Active'
             ORDER BY gender, last_name
         `, [sectionName]);
@@ -2827,7 +3144,7 @@ app.get('/api/export/generate', async (req, res) => {
 
         const attendanceRes = await client.query(`
             SELECT student_id, to_char(time_in, 'YYYY-MM-DD') as date, time_in
-            FROM present 
+            FROM ${presentTable} 
             WHERE time_in >= $1::date AND time_in <= $2::date
         `, [startOfMonth, endOfMonth]);
 
@@ -3061,6 +3378,7 @@ app.get('/api/sms/settings', async (req, res) => {
         // Hotfix: Add columns for ZTE/Modem IP if they don't exist
         await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_ip TEXT`);
         await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_password TEXT`);
+        await client.query(`ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS client_side_execution BOOLEAN DEFAULT FALSE`);
 
         const result = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
         res.json(result.rows[0] || {});
@@ -3075,7 +3393,7 @@ app.get('/api/sms/settings', async (req, res) => {
 
 // Save SMS Settings
 app.post('/api/sms/settings', async (req, res) => {
-    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password } = req.body;
+    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, client_side_execution } = req.body;
     const client = await pool.connect();
     try {
         // [HOTFIX] Drop constraint preventing new provider types (like 'huawei')
@@ -3090,16 +3408,16 @@ app.post('/api/sms/settings', async (req, res) => {
         if (checkRes.rows.length > 0) {
             const id = checkRes.rows[0].id;
             await client.query(`
-                UPDATE sms_provider_settings 
-                SET provider_type=$1, sms_enabled=$2, api_url=$3, api_key=$4, tty_path=$5, baud_rate=$6, message_template=$7, curl_config_json=$8, modem_ip=$9, modem_password=$10, provider_name=$11, updated_at=CURRENT_TIMESTAMP
-                WHERE id=$12
-            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, id]);
+                UPDATE sms_provider_settings
+                SET provider_type=$1, sms_enabled=$2, api_url=$3, api_key=$4, tty_path=$5, baud_rate=$6, message_template=$7, curl_config_json=$8, modem_ip=$9, modem_password=$10, provider_name=$11, client_side_execution=$12, updated_at=CURRENT_TIMESTAMP
+                WHERE id=$13
+            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution, id]);
         } else {
             // Insert new with explicit ID 1 to bypass sequence issues
             await client.query(`
-                INSERT INTO sms_provider_settings (id, provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name)
-                VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name]);
+                INSERT INTO sms_provider_settings (id, provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution)
+                VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution]);
         }
         res.json({ success: true });
     } catch (err) {
@@ -3114,19 +3432,25 @@ app.post('/api/sms/settings', async (req, res) => {
 app.get('/api/sms/logs', async (req, res) => {
     const client = await pool.connect();
     try {
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS sms_logs (
-                sms_id SERIAL PRIMARY KEY,
-                recipient_number TEXT,
-                recipient_name TEXT,
-                related_student_id TEXT,
-                message_body TEXT,
-                status TEXT,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                error_message TEXT
-            )
-        `);
-        const result = await client.query('SELECT * FROM sms_logs ORDER BY sent_at DESC LIMIT 100');
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const tableName = isTestMode ? 'testing_sms_logs' : 'sms_logs';
+
+        if (!isTestMode) {
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS sms_logs (
+                    sms_id SERIAL PRIMARY KEY,
+                    recipient_number TEXT,
+                    recipient_name TEXT,
+                    related_student_id TEXT,
+                    message_body TEXT,
+                    status TEXT,
+                    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    error_message TEXT
+                )
+            `);
+        }
+        const result = await client.query(`SELECT * FROM ${tableName} ORDER BY sent_at DESC LIMIT 100`);
         res.json(result.rows);
     } catch (err) {
         debugLogWriteToFile(`[SMS] GET LOGS ERROR: ${err.message}`);
@@ -3140,7 +3464,13 @@ app.get('/api/sms/logs', async (req, res) => {
 app.post('/api/sms/send', async (req, res) => {
     const { recipient_number, message_body } = req.body;
     const client = await pool.connect();
+    let tableName = 'sms_logs';
     try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        if (configRes.rows.length > 0 && configRes.rows[0].test_mode) {
+            tableName = 'testing_sms_logs';
+        }
+
         // Fetch settings to determine how to send
         const settingsRes = await client.query('SELECT * FROM sms_provider_settings ORDER BY id DESC LIMIT 1');
         const settings = settingsRes.rows[0];
@@ -3154,10 +3484,10 @@ app.post('/api/sms/send', async (req, res) => {
             }
         }
 
-        await client.query("INSERT INTO sms_logs (recipient_number, message_body, status) VALUES ($1, $2, 'sent')", [recipient_number, message_body]);
+        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status) VALUES ($1, $2, 'sent')`, [recipient_number, message_body]);
         res.json({ success: true });
     } catch (err) {
-        await client.query("INSERT INTO sms_logs (recipient_number, message_body, status, error_message) VALUES ($1, $2, 'failed', $3)", [recipient_number, message_body, err.message]);
+        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, error_message) VALUES ($1, $2, 'failed', $3)`, [recipient_number, message_body, err.message]);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -3167,6 +3497,7 @@ app.post('/api/sms/send', async (req, res) => {
 
 // Helper to get connected device, commented out to avoid connection during flashing
 async function getHuaweiConnection(client) {
+    if (!huaweiLteApi) throw new Error("Huawei LTE API module not installed.");
     // Ensure table exists
     await client.query(`
         CREATE TABLE IF NOT EXISTS router_settings (
@@ -3410,7 +3741,7 @@ app.get('/api/setup/configuration', async (req, res) => {
 // [CONF-UPDATE]
 // Update Configuration
 app.put('/api/setup/configuration', upload, async (req, res) => {
-    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window, feature_event_based, feature_id_generation, feature_sf2_generation } = req.body;
+    const { school_name, school_id, country_code, address, principal_name, principal_title, school_year, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window, feature_event_based, feature_id_generation, feature_sf2_generation, test_mode } = req.body;
 
     const client = await pool.connect();
     try {
@@ -3419,7 +3750,7 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
 
         if (check.rows.length === 0) {
             // Insert (Only if table is empty)
-            const logoPath = req.file ? `/ assets / images / logos / ${req.file.filename}` : null;
+            const logoPath = req.file ? `/assets/images/logos/${req.file.filename}` : null;
             await client.query(
                 `INSERT INTO configurations(school_name, school_id, country_code, address, principal_name, principal_title, school_year, logo_directory, maintenance_mode, ntp_server, time_in_start, time_late_threshold, time_out_target, fixed_weekday_schedule, strict_attendance_window)
                   VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
@@ -3450,13 +3781,14 @@ app.put('/api/setup/configuration', upload, async (req, res) => {
             const feat_event = feature_event_based !== undefined ? feature_event_based === 'true' : null;
             const feat_id = feature_id_generation !== undefined ? feature_id_generation === 'true' : null;
             const feat_sf2 = feature_sf2_generation !== undefined ? feature_sf2_generation === 'true' : null;
+            const is_test_mode = test_mode !== undefined ? test_mode === 'true' : null;
 
             if (req.file) {
-                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule), strict_attendance_window = COALESCE($16, strict_attendance_window), feature_event_based = COALESCE($17, feature_event_based), feature_id_generation = COALESCE($18, feature_id_generation), feature_sf2_generation = COALESCE($19, feature_sf2_generation) WHERE config_id = $14`;
-                params.push(`/ assets / images / logos / ${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
+                query += `, logo_directory = $12, maintenance_mode = COALESCE($13, maintenance_mode), fixed_weekday_schedule = COALESCE($15, fixed_weekday_schedule), strict_attendance_window = COALESCE($16, strict_attendance_window), feature_event_based = COALESCE($17, feature_event_based), feature_id_generation = COALESCE($18, feature_id_generation), feature_sf2_generation = COALESCE($19, feature_sf2_generation), test_mode = COALESCE($20, test_mode) WHERE config_id = $14`;
+                params.push(`/assets/images/logos/${req.file.filename}`, maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2, is_test_mode);
             } else {
-                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule), strict_attendance_window = COALESCE($15, strict_attendance_window), feature_event_based = COALESCE($16, feature_event_based), feature_id_generation = COALESCE($17, feature_id_generation), feature_sf2_generation = COALESCE($18, feature_sf2_generation) WHERE config_id = $13`;
-                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2);
+                query += `, maintenance_mode = COALESCE($12, maintenance_mode), fixed_weekday_schedule = COALESCE($14, fixed_weekday_schedule), strict_attendance_window = COALESCE($15, strict_attendance_window), feature_event_based = COALESCE($16, feature_event_based), feature_id_generation = COALESCE($17, feature_id_generation), feature_sf2_generation = COALESCE($18, feature_sf2_generation), test_mode = COALESCE($19, test_mode) WHERE config_id = $13`;
+                params.push(maintenance_mode !== undefined ? maintenance_mode === 'true' : null, id, fixed_weekday_schedule !== undefined ? fixed_weekday_schedule === 'true' : null, strict_attendance_window !== undefined ? strict_attendance_window === 'true' : null, feat_event, feat_id, feat_sf2, is_test_mode);
             }
             await client.query(query, params);
         }
@@ -3910,6 +4242,51 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
     }
 });
 
+// [SMS-LOG-EXTERNAL]
+// Log SMS sent from client-side (HardwareComms)
+app.post('/api/sms/log', async (req, res) => {
+    const { recipient_number, recipient_name, related_student_id, message_body, status, error_message } = req.body;
+    const client = await pool.connect();
+    try {
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+        const tableName = isTestMode ? 'testing_sms_logs' : 'sms_logs';
+
+        await client.query(
+            `INSERT INTO ${tableName} (recipient_number, recipient_name, related_student_id, message_body, status, error_message) VALUES ($1, $2, $3, $4, $5, $6)`,
+            [recipient_number, recipient_name, related_student_id, message_body, status, error_message]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    } finally {
+        client.release();
+    }
+});
+
+// [DEBUG] Network Connectivity Test (Curl)
+app.post('/api/debug/network-test', async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    // Basic sanitization to prevent command injection
+    if (url.includes(' ') || url.includes(';') || url.includes('|') || url.includes('$') || url.includes('`')) {
+        return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
+    try {
+        debugLogWriteToFile(`[DEBUG] Executing curl test to: ${url}`);
+        // -I: Head request (headers only), -v: Verbose, --connect-timeout 5: Fail fast
+        const command = `curl -I -v --connect-timeout 5 "${url}"`;
+        const { stdout, stderr } = await execPromise(command);
+        
+        res.json({ success: true, output: stdout + '\n' + stderr });
+    } catch (err) {
+        debugLogWriteToFile(`[DEBUG] Curl test failed: ${err.message}`);
+        res.status(500).json({ success: false, error: err.message, output: err.stderr || err.stdout });
+    }
+});
+
 // [SMS-INTERNAL-HELPER]
 // Helper function to send SMS "behind the scenes" after a scan
 async function sendSMSInternal(pool, studentData, type, recordTime) {
@@ -3922,6 +4299,10 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
         const settings = settingsRes.rows[0];
         if (!settings || !settings.sms_enabled) return;
 
+        // If client-side execution is enabled, skip backend sending
+        // The frontend is responsible for calling the hardware API and logging the result
+        if (settings.client_side_execution) return;
+
         // 2. Validate Recipient
         const recipient = studentData.emergency_contact_phone;
         if (!recipient) {
@@ -3930,8 +4311,11 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
         }
 
         // 3. Prepare Message
-        const configRes = await client.query('SELECT school_name FROM configurations LIMIT 1');
-        const schoolName = configRes.rows[0]?.school_name || 'School';
+        const configRes = await client.query('SELECT school_name, test_mode FROM configurations LIMIT 1');
+        const config = configRes.rows[0] || { school_name: 'School' };
+        const schoolName = config.school_name;
+        const isTestMode = config.test_mode;
+        const tableName = isTestMode ? 'testing_sms_logs' : 'sms_logs';
         
         const parentName = studentData.emergency_contact_name || 'Parent/Guardian';
         const studentName = `${studentData.first_name} ${studentData.last_name}`;
@@ -3990,6 +4374,7 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
                 });
 
             } else if (settings.provider_type === 'huawei') {
+                if (!huaweiLteApi) throw new Error("Huawei LTE API module not installed.");
                 const connection = await getHuaweiConnection(client);
                 await connection.ready;
                 const sms = new huaweiLteApi.Sms(connection);
@@ -4003,7 +4388,7 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
 
         // 5. Log
         await client.query(
-            "INSERT INTO sms_logs (recipient_number, recipient_name, related_student_id, message_body, status, error_message) VALUES ($1, $2, $3, $4, $5, $6)",
+            `INSERT INTO ${tableName} (recipient_number, recipient_name, related_student_id, message_body, status, error_message) VALUES ($1, $2, $3, $4, $5, $6)`,
             [recipient, parentName, studentData.student_id, message, status, errorMsg]
         );
 
@@ -4023,8 +4408,14 @@ app.post('/api/attendance/scan', async (req, res) => {
 
     try {
         // 0. Check Strict Attendance Window
-        const configRes = await client.query("SELECT time_in_start, time_out_target, strict_attendance_window, country_code FROM configurations LIMIT 1");
+        const configRes = await client.query("SELECT time_in_start, time_out_target, strict_attendance_window, country_code, maintenance_mode, test_mode FROM configurations LIMIT 1");
         const config = configRes.rows[0] || {};
+
+        const isTestMode = config.test_mode;
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const eventAttendanceTable = isTestMode ? 'testing_event_attendance' : 'event_attendance';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+
 
         const timeZone = CountryTimezones[(config.country_code || 'PH').toUpperCase()] || 'UTC';
 
@@ -4045,7 +4436,7 @@ app.post('/api/attendance/scan', async (req, res) => {
         }
 
 
-        if (config.strict_attendance_window) {
+        if (config.strict_attendance_window && !config.maintenance_mode && !config.test_mode) {
             try {
                 // Determine current time in School's Timezone using robust Intl formatting
                 const now = new Date(timestamp || Date.now());
@@ -4097,7 +4488,7 @@ app.post('/api/attendance/scan', async (req, res) => {
             }
         }
 
-        const studentRes = await client.query("SELECT student_id, first_name, last_name, emergency_contact_name, emergency_contact_phone FROM students WHERE student_id = $1", [studentIdToSearch]);
+        const studentRes = await client.query(`SELECT student_id, first_name, last_name, emergency_contact_name, emergency_contact_phone FROM ${studentsTable} WHERE student_id = $1`, [studentIdToSearch]);
         if (studentRes.rows.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
@@ -4108,7 +4499,7 @@ app.post('/api/attendance/scan', async (req, res) => {
 
             // Check if already scanned for this event
             // We get the latest record to determine state
-            const check = await client.query("SELECT id, time_out FROM event_attendance WHERE event_id = $1 AND student_id = $2 ORDER BY time_in DESC LIMIT 1", [event_id, student.student_id]);
+            const check = await client.query(`SELECT id, time_out FROM ${eventAttendanceTable} WHERE event_id = $1 AND student_id = $2 ORDER BY time_in DESC LIMIT 1`, [event_id, student.student_id]);
 
             if (scanType === 'in') {
                 // If latest record exists and has NO time_out, they are currently checked in.
@@ -4117,7 +4508,7 @@ app.post('/api/attendance/scan', async (req, res) => {
                 }
                 // Otherwise (no record OR previous record has time_out), allow new entry
                 await client.query(
-                    "INSERT INTO event_attendance (event_id, student_id, location, time_in, time_in_client, time_in_server) VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, NOW())",
+                    `INSERT INTO ${eventAttendanceTable} (event_id, student_id, location, time_in, time_in_client, time_in_server) VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, NOW())`,
                     [event_id, student.student_id, location || 'Kiosk', recordTime, client_timestamp]
                 );
                 sendSMSInternal(pool, student, 'in', recordTime || new Date()).catch(console.error);
@@ -4126,12 +4517,12 @@ app.post('/api/attendance/scan', async (req, res) => {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
 
-                await client.query("UPDATE event_attendance SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE id = $1", [check.rows[0].id, recordTime, client_timestamp]);
+                await client.query(`UPDATE ${eventAttendanceTable} SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE id = $1`, [check.rows[0].id, recordTime, client_timestamp]);
                 sendSMSInternal(pool, student, 'out', recordTime || new Date()).catch(console.error);
             }
         } else {
             // Normal Mode (Daily Attendance)
-            const check = await client.query("SELECT present_id, time_out FROM present WHERE student_id = $1 AND time_in::date = CURRENT_DATE ORDER BY time_in DESC LIMIT 1", [student.student_id]);
+            const check = await client.query(`SELECT present_id, time_out FROM ${presentTable} WHERE student_id = $1 AND time_in::date = CURRENT_DATE ORDER BY time_in DESC LIMIT 1`, [student.student_id]);
 
             if (scanType === 'in') {
                 if (check.rows.length > 0) {
@@ -4141,7 +4532,7 @@ app.post('/api/attendance/scan', async (req, res) => {
                     return res.status(409).json({ error: 'Already checked in today', student });
                 }
                 await client.query(
-                    "INSERT INTO present (student_id, time_in, staff_id, location, time_in_client, time_in_server) VALUES ($1, COALESCE($4, NOW()), $2, $3, $5, NOW())",
+                    `INSERT INTO ${presentTable} (student_id, time_in, staff_id, location, time_in_client, time_in_server) VALUES ($1, COALESCE($4, NOW()), $2, $3, $5, NOW())`,
                     [student.student_id, staff_id || null, location || 'Kiosk', recordTime, client_timestamp]
                 );
                 sendSMSInternal(pool, student, 'in', recordTime || new Date()).catch(console.error);
@@ -4149,7 +4540,7 @@ app.post('/api/attendance/scan', async (req, res) => {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
 
-                await client.query("UPDATE present SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE present_id = $1", [check.rows[0].present_id, recordTime, client_timestamp]);
+                await client.query(`UPDATE ${presentTable} SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE present_id = $1`, [check.rows[0].present_id, recordTime, client_timestamp]);
                 sendSMSInternal(pool, student, 'out', recordTime || new Date()).catch(console.error);
             }
         }
@@ -4400,10 +4791,14 @@ async function checkEventStatus() {
         const nowMs = Date.now() + (globalTimeOffset || 0);
         const now = new Date(nowMs);
 
+        // Helper to update a specific table
+        const updateTable = async (tableName) => {
+            let localUpdates = 0;
+
         // 1. Set to Ongoing
         // Events that are 'planned', start time has passed, and end time hasn't passed
         const ongoingRes = await client.query(`
-            UPDATE events 
+            UPDATE ${tableName} 
             SET status = 'ongoing' 
             WHERE status = 'planned' 
             AND start_datetime <= $1 
@@ -4411,23 +4806,29 @@ async function checkEventStatus() {
     `, [now]);
 
         if (ongoingRes.rowCount > 0) {
-            debugLogWriteToFile(`[EVENT WATCHDOG]Set ${ongoingRes.rowCount} events to 'ongoing'.`);
-            updates += ongoingRes.rowCount;
+            debugLogWriteToFile(`[EVENT WATCHDOG]Set ${ongoingRes.rowCount} events in ${tableName} to 'ongoing'.`);
+            localUpdates += ongoingRes.rowCount;
         }
 
         // 2. Set to Completed
         // Events that are 'planned' or 'ongoing', and end time has passed
         const completedRes = await client.query(`
-            UPDATE events 
+            UPDATE ${tableName} 
             SET status = 'completed' 
             WHERE status IN('planned', 'ongoing') 
             AND end_datetime <= $1
     `, [now]);
 
         if (completedRes.rowCount > 0) {
-            debugLogWriteToFile(`[EVENT WATCHDOG]Set ${completedRes.rowCount} events to 'completed'.`);
-            updates += completedRes.rowCount;
+            debugLogWriteToFile(`[EVENT WATCHDOG]Set ${completedRes.rowCount} events in ${tableName} to 'completed'.`);
+            localUpdates += completedRes.rowCount;
         }
+            return localUpdates;
+        };
+
+        // Run for both tables to ensure consistency regardless of current mode
+        updates += await updateTable('events');
+        updates += await updateTable('testing_events');
 
     } catch (err) {
         debugLogWriteToFile(`[EVENT WATCHDOG]Error: ${err.message}`);

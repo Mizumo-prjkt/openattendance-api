@@ -1062,6 +1062,12 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_server TIMESTAMP");
                 await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_ntp TIMESTAMP");
 
+                // 23. SMS Recipient & Student Info Columns (Ensure they exist for logging)
+                await hotfixClient.query("ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS recipient_name TEXT");
+                await hotfixClient.query("ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS related_student_id TEXT");
+                await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS recipient_name TEXT");
+                await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS related_student_id TEXT");
+
                 // 19. Fix Foreign Keys for Student ID Updates (ON UPDATE CASCADE)
                 // We drop and recreate constraints to ensure they propagate ID changes
                 const tablesToFixFK = [
@@ -3461,6 +3467,7 @@ app.get('/api/sms/logs', async (req, res) => {
         const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
         const isTestMode = configRes.rows[0]?.test_mode;
         const tableName = isTestMode ? 'testing_sms_logs' : 'sms_logs';
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
 
         if (!isTestMode) {
             await client.query(`
@@ -3476,7 +3483,18 @@ app.get('/api/sms/logs', async (req, res) => {
                 )
             `);
         }
-        const result = await client.query(`SELECT * FROM ${tableName} ORDER BY sent_at DESC LIMIT 100`);
+        
+        // Join with students table to get names for better identification
+        const query = `
+            SELECT 
+                l.*,
+                s.first_name,
+                s.last_name
+            FROM ${tableName} l
+            LEFT JOIN ${studentsTable} s ON l.related_student_id = s.student_id
+            ORDER BY l.sent_at DESC LIMIT 100
+        `;
+        const result = await client.query(query);
         res.json(result.rows);
     } catch (err) {
         debugLogWriteToFile(`[SMS] GET LOGS ERROR: ${err.message}`);
@@ -3488,7 +3506,7 @@ app.get('/api/sms/logs', async (req, res) => {
 
 // Send SMS (Test)
 app.post('/api/sms/send', async (req, res) => {
-    const { recipient_number, message_body, client_timestamp } = req.body;
+    const { recipient_number, message_body, client_timestamp, recipient_name, related_student_id } = req.body;
     const client = await pool.connect();
     let tableName = 'sms_logs';
     try {
@@ -3515,10 +3533,10 @@ app.post('/api/sms/send', async (req, res) => {
         const serverTime = new Date();
         const ntpTime = new Date(Date.now() + (globalTimeOffset || 0));
 
-        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, sent_at_client, sent_at_server, sent_at_ntp) VALUES ($1, $2, 'sent', $3, $4, $5)`, [recipient_number, message_body, client_timestamp, serverTime, ntpTime]);
+        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, sent_at_client, sent_at_server, sent_at_ntp, recipient_name, related_student_id) VALUES ($1, $2, 'sent', $3, $4, $5, $6, $7)`, [recipient_number, message_body, client_timestamp, serverTime, ntpTime, recipient_name, related_student_id]);
         res.json({ success: true });
     } catch (err) {
-        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, error_message, sent_at_client, sent_at_server) VALUES ($1, $2, 'failed', $3, $4, NOW())`, [recipient_number, message_body, err.message, client_timestamp]);
+        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, error_message, sent_at_client, sent_at_server, recipient_name, related_student_id) VALUES ($1, $2, 'failed', $3, $4, NOW(), $5, $6)`, [recipient_number, message_body, err.message, client_timestamp, recipient_name, related_student_id]);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();

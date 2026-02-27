@@ -987,6 +987,9 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out TIMESTAMP");
                 await hotfixClient.query("ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out TIMESTAMP");
 
+                // 10.1 Ensure SMS Settings has event template
+                await hotfixClient.query("ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS event_message_template TEXT");
+
                 // 11. Ensure attendance configuration columns exist
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_in_start TIME DEFAULT '06:00:00'");
                 await hotfixClient.query("ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_late_threshold TIME DEFAULT '08:00:00'");
@@ -1050,6 +1053,14 @@ async function checkAndInitDB() {
                 await hotfixClient.query("ALTER TABLE events ADD COLUMN IF NOT EXISTS end_time_client TEXT");
                 await hotfixClient.query("ALTER TABLE testing_events ADD COLUMN IF NOT EXISTS start_time_client TEXT");
                 await hotfixClient.query("ALTER TABLE testing_events ADD COLUMN IF NOT EXISTS end_time_client TEXT");
+
+                // 22. SMS Time Debugging Columns
+                await hotfixClient.query("ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS sent_at_client TEXT");
+                await hotfixClient.query("ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS sent_at_server TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS sent_at_ntp TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_client TEXT");
+                await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_server TIMESTAMP");
+                await hotfixClient.query("ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_ntp TIMESTAMP");
 
                 // 19. Fix Foreign Keys for Student ID Updates (ON UPDATE CASCADE)
                 // We drop and recreate constraints to ensure they propagate ID changes
@@ -1222,6 +1233,9 @@ async function checkAndInitDB() {
                         message_body TEXT NOT NULL,
                         status TEXT,
                         sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        sent_at_client TEXT,
+                        sent_at_server TIMESTAMP,
+                        sent_at_ntp TIMESTAMP,
                         error_message TEXT,
                         FOREIGN KEY (related_student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE
                     )`
@@ -1999,21 +2013,26 @@ app.get('/api/setup/verify-schema', async (req, res) => {
 app.get('/api/dashboard/overview', async (req, res) => {
     const client = await pool.connect();
     try {
+        // Check Test Mode & Config
+        const configRes = await client.query("SELECT time_late_threshold, test_mode FROM configurations LIMIT 1");
+        const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
+        const isTestMode = configRes.rows[0]?.test_mode;
+
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+        const absentTable = isTestMode ? 'testing_absent' : 'absent';
+
         // 1. Stats
-        const totalStudentsRes = await client.query("SELECT COUNT(*) FROM students WHERE status = 'Active'");
+        const totalStudentsRes = await client.query(`SELECT COUNT(*) FROM ${studentsTable} WHERE status = 'Active'`);
         const totalStudents = parseInt(totalStudentsRes.rows[0].count || 0);
 
-        const presentTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE");
+        const presentTodayRes = await client.query(`SELECT COUNT(DISTINCT student_id) FROM ${presentTable} WHERE time_in::date = CURRENT_DATE`);
         const presentToday = parseInt(presentTodayRes.rows[0].count || 0);
 
-        const absentTodayRes = await client.query("SELECT COUNT(*) FROM absent WHERE absent_datetime::date = CURRENT_DATE");
+        const absentTodayRes = await client.query(`SELECT COUNT(*) FROM ${absentTable} WHERE absent_datetime::date = CURRENT_DATE`);
         const absentToday = parseInt(absentTodayRes.rows[0].count || 0);
 
-        // Get Late Treshold!
-        const configRes = await client.query("SELECT time_late_threshold FROM configurations LIMIT 1");
-        const lateThreshold = configRes.rows[0]?.time_late_threshold || '08:00:00';
-
-        const lateTodayRes = await client.query("SELECT COUNT(DISTINCT student_id) FROM present WHERE time_in::date = CURRENT_DATE AND time_in::time > $1", [lateThreshold]);
+        const lateTodayRes = await client.query(`SELECT COUNT(DISTINCT student_id) FROM ${presentTable} WHERE time_in::date = CURRENT_DATE AND time_in::time > $1`, [lateThreshold]);
         const lateToday = parseInt(lateTodayRes.rows[0].count || 0);
 
         // 2. Chart Data (Last 7 days)
@@ -2023,7 +2042,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
                 to_char(d, 'Dy') as day,
                 COALESCE(COUNT(p.present_id), 0) as count
             FROM generate_series(CURRENT_DATE - INTERVAL '6 days', CURRENT_DATE, '1 day') d
-            LEFT JOIN present p ON p.time_in::date = d::date
+            LEFT JOIN ${presentTable} p ON p.time_in::date = d::date
             GROUP BY d
             ORDER BY d
         `;
@@ -2039,8 +2058,8 @@ app.get('/api/dashboard/overview', async (req, res) => {
                 'login' as icon,
                 'text-[#146C2E]' as iconColor,
                 'bg-[#C4EED0]' as bg
-            FROM present p
-            JOIN students s ON p.student_id = s.student_id
+            FROM ${presentTable} p
+            JOIN ${studentsTable} s ON p.student_id = s.student_id
             ORDER BY p.time_in DESC
             LIMIT 5
         `;
@@ -2071,11 +2090,18 @@ app.get('/api/dashboard/analytics', async (req, res) => {
     const { filter_type, filter_value } = req.query;
     const client = await pool.connect();
     try {
+        // Check Test Mode
+        const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
+        const isTestMode = configRes.rows[0]?.test_mode;
+
+        const studentsTable = isTestMode ? 'testing_students' : 'students';
+        const presentTable = isTestMode ? 'testing_present' : 'present';
+
         // 1. Kiosk Performance (Scans by Staff/Kiosk Account)
         // Daily
         const kioskDailyQuery = `
             SELECT sa.name, COUNT(p.present_id) as scan_count
-            FROM present p
+            FROM ${presentTable} p
             JOIN staff_accounts sa ON p.staff_id = sa.staff_id
             WHERE p.time_in::date = CURRENT_DATE
             GROUP BY sa.name
@@ -2086,7 +2112,7 @@ app.get('/api/dashboard/analytics', async (req, res) => {
         // Weekly
         const kioskWeeklyQuery = `
             SELECT sa.name, COUNT(p.present_id) as scan_count
-            FROM present p
+            FROM ${presentTable} p
             JOIN staff_accounts sa ON p.staff_id = sa.staff_id
             WHERE p.time_in >= CURRENT_DATE - INTERVAL '7 days'
             GROUP BY sa.name
@@ -2098,7 +2124,7 @@ app.get('/api/dashboard/analytics', async (req, res) => {
         // First, get total students per section to calculate percentage
         const sectionTotalsQuery = `
             SELECT classroom_section, COUNT(*) as total_students
-            FROM students
+            FROM ${studentsTable}
             WHERE status = 'Active' AND classroom_section IS NOT NULL
             GROUP BY classroom_section
         `;
@@ -2127,8 +2153,8 @@ app.get('/api/dashboard/analytics', async (req, res) => {
             }
             const query = `
                 SELECT s.classroom_section, COUNT(p.present_id) as present_count
-                FROM present p
-                JOIN students s ON p.student_id = s.student_id
+                FROM ${presentTable} p
+                JOIN ${studentsTable} s ON p.student_id = s.student_id
                 WHERE ${timeCondition}
                 AND s.classroom_section IS NOT NULL
                 GROUP BY s.classroom_section
@@ -3393,7 +3419,7 @@ app.get('/api/sms/settings', async (req, res) => {
 
 // Save SMS Settings
 app.post('/api/sms/settings', async (req, res) => {
-    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, client_side_execution } = req.body;
+    const { provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, event_message_template, curl_config_json, modem_ip, modem_password, client_side_execution } = req.body;
     const client = await pool.connect();
     try {
         // [HOTFIX] Drop constraint preventing new provider types (like 'huawei')
@@ -3409,15 +3435,15 @@ app.post('/api/sms/settings', async (req, res) => {
             const id = checkRes.rows[0].id;
             await client.query(`
                 UPDATE sms_provider_settings
-                SET provider_type=$1, sms_enabled=$2, api_url=$3, api_key=$4, tty_path=$5, baud_rate=$6, message_template=$7, curl_config_json=$8, modem_ip=$9, modem_password=$10, provider_name=$11, client_side_execution=$12, updated_at=CURRENT_TIMESTAMP
-                WHERE id=$13
-            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution, id]);
+                SET provider_type=$1, sms_enabled=$2, api_url=$3, api_key=$4, tty_path=$5, baud_rate=$6, message_template=$7, curl_config_json=$8, modem_ip=$9, modem_password=$10, provider_name=$11, client_side_execution=$12, event_message_template=$13, updated_at=CURRENT_TIMESTAMP
+                WHERE id=$14
+            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution, event_message_template, id]);
         } else {
             // Insert new with explicit ID 1 to bypass sequence issues
             await client.query(`
-                INSERT INTO sms_provider_settings (id, provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution)
-                VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution]);
+                INSERT INTO sms_provider_settings (id, provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution, event_message_template)
+                VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            `, [provider_type, sms_enabled, api_url, api_key, tty_path, baud_rate, message_template, curl_config_json, modem_ip, modem_password, provider_name, client_side_execution, event_message_template]);
         }
         res.json({ success: true });
     } catch (err) {
@@ -3462,7 +3488,7 @@ app.get('/api/sms/logs', async (req, res) => {
 
 // Send SMS (Test)
 app.post('/api/sms/send', async (req, res) => {
-    const { recipient_number, message_body } = req.body;
+    const { recipient_number, message_body, client_timestamp } = req.body;
     const client = await pool.connect();
     let tableName = 'sms_logs';
     try {
@@ -3486,10 +3512,13 @@ app.post('/api/sms/send', async (req, res) => {
             }
         }
 
-        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status) VALUES ($1, $2, 'sent')`, [recipient_number, message_body]);
+        const serverTime = new Date();
+        const ntpTime = new Date(Date.now() + (globalTimeOffset || 0));
+
+        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, sent_at_client, sent_at_server, sent_at_ntp) VALUES ($1, $2, 'sent', $3, $4, $5)`, [recipient_number, message_body, client_timestamp, serverTime, ntpTime]);
         res.json({ success: true });
     } catch (err) {
-        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, error_message) VALUES ($1, $2, 'failed', $3)`, [recipient_number, message_body, err.message]);
+        await client.query(`INSERT INTO ${tableName} (recipient_number, message_body, status, error_message, sent_at_client, sent_at_server) VALUES ($1, $2, 'failed', $3, $4, NOW())`, [recipient_number, message_body, err.message, client_timestamp]);
         res.status(500).json({ error: err.message });
     } finally {
         client.release();
@@ -4247,16 +4276,19 @@ app.get('/api/benchmark/comprehensive', async (req, res) => {
 // [SMS-LOG-EXTERNAL]
 // Log SMS sent from client-side (HardwareComms)
 app.post('/api/sms/log', async (req, res) => {
-    const { recipient_number, recipient_name, related_student_id, message_body, status, error_message } = req.body;
+    const { recipient_number, recipient_name, related_student_id, message_body, status, error_message, client_timestamp } = req.body;
     const client = await pool.connect();
     try {
         const configRes = await client.query("SELECT test_mode FROM configurations LIMIT 1");
         const isTestMode = configRes.rows[0]?.test_mode;
         const tableName = isTestMode ? 'testing_sms_logs' : 'sms_logs';
 
+        const serverTime = new Date();
+        const ntpTime = new Date(Date.now() + (globalTimeOffset || 0));
+
         await client.query(
-            `INSERT INTO ${tableName} (recipient_number, recipient_name, related_student_id, message_body, status, error_message) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [recipient_number, recipient_name, related_student_id, message_body, status, error_message]
+            `INSERT INTO ${tableName} (recipient_number, recipient_name, related_student_id, message_body, status, error_message, sent_at_client, sent_at_server, sent_at_ntp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [recipient_number, recipient_name, related_student_id, message_body, status, error_message, client_timestamp, serverTime, ntpTime]
         );
         res.json({ success: true });
     } catch (err) {
@@ -4423,7 +4455,7 @@ async function sendHuaweiPythonSms(client, recipient, message) {
 
 // [SMS-INTERNAL-HELPER]
 // Helper function to send SMS "behind the scenes" after a scan
-async function sendSMSInternal(pool, studentData, type, recordTime) {
+async function sendSMSInternal(pool, studentData, type, recordTime, eventName = null, clientTimestamp = null) {
     let client;
     try {
         client = await pool.connect();
@@ -4454,17 +4486,31 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
         const parentName = studentData.emergency_contact_name || 'Parent/Guardian';
         const studentName = `${studentData.first_name} ${studentData.last_name}`;
         
+        let genderTerm = 'child';
+        if (studentData.gender === 'Male') genderTerm = 'son';
+        else if (studentData.gender === 'Female') genderTerm = 'daughter';
+
+        const statusTerm = type === 'in' ? 'checked in' : 'checked out';
         let timeDisplay = 'Just now';
         if (recordTime) {
             const d = new Date(recordTime);
             timeDisplay = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
         }
 
-        let message = settings.message_template || "Student {children} has {status} at {time}.";
+        // Select Template
+        let message = settings.message_template;
+        if (eventName && settings.event_message_template) {
+            message = settings.event_message_template;
+        }
+        if (!message) message = "Student {children} has {status} at {time}.";
+
         message = message.replace(/{parent_name}/g, parentName)
                          .replace(/{campus_name}/g, schoolName)
                          .replace(/{school_name}/g, schoolName)
+                         .replace(/{school_event}/g, eventName || schoolName)
                          .replace(/{children}/g, studentName)
+                         .replace(/{studentGender}/g, genderTerm)
+                         .replace(/{checkingStatus}/g, statusTerm)
                          .replace(/{time}/g, timeDisplay)
                          .replace(/{status}/g, type === 'in' ? 'arrived' : 'left');
 
@@ -4522,10 +4568,13 @@ async function sendSMSInternal(pool, studentData, type, recordTime) {
             console.error(`[SMS] Send Failed: ${e.message}`);
         }
 
+        const serverTime = new Date();
+        const ntpTime = new Date(Date.now() + (globalTimeOffset || 0));
+
         // 5. Log
         await client.query(
-            `INSERT INTO ${tableName} (recipient_number, recipient_name, related_student_id, message_body, status, error_message) VALUES ($1, $2, $3, $4, $5, $6)`,
-            [recipient, parentName, studentData.student_id, message, status, errorMsg]
+            `INSERT INTO ${tableName} (recipient_number, recipient_name, related_student_id, message_body, status, error_message, sent_at_client, sent_at_server, sent_at_ntp) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [recipient, parentName, studentData.student_id, message, status, errorMsg, clientTimestamp, serverTime, ntpTime]
         );
 
     } catch (err) {
@@ -4624,7 +4673,7 @@ app.post('/api/attendance/scan', async (req, res) => {
             }
         }
 
-        const studentRes = await client.query(`SELECT student_id, first_name, last_name, emergency_contact_name, emergency_contact_phone FROM ${studentsTable} WHERE student_id = $1`, [studentIdToSearch]);
+        const studentRes = await client.query(`SELECT student_id, first_name, last_name, emergency_contact_name, emergency_contact_phone, gender FROM ${studentsTable} WHERE student_id = $1`, [studentIdToSearch]);
         if (studentRes.rows.length === 0) {
             return res.status(404).json({ error: 'Student not found' });
         }
@@ -4632,6 +4681,10 @@ app.post('/api/attendance/scan', async (req, res) => {
 
         if (mode === 'event') {
             if (!event_id) return res.status(400).json({ error: 'Event ID required for event mode' });
+
+            // Fetch event name for SMS
+            const eventRes = await client.query(`SELECT event_name FROM ${isTestMode ? 'testing_events' : 'events'} WHERE event_id = $1`, [event_id]);
+            const eventName = eventRes.rows[0]?.event_name || 'Event';
 
             // Check if already scanned for this event
             // We get the latest record to determine state
@@ -4647,14 +4700,14 @@ app.post('/api/attendance/scan', async (req, res) => {
                     `INSERT INTO ${eventAttendanceTable} (event_id, student_id, location, time_in, time_in_client, time_in_server) VALUES ($1, $2, $3, COALESCE($4, NOW()), $5, NOW())`,
                     [event_id, student.student_id, location || 'Kiosk', recordTime, client_timestamp]
                 );
-                sendSMSInternal(pool, student, 'in', recordTime || new Date()).catch(console.error);
+                sendSMSInternal(pool, student, 'in', recordTime || new Date(), eventName, client_timestamp).catch(console.error);
             } else {
                 // Time Out
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for this event', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out from this event', student });
 
                 await client.query(`UPDATE ${eventAttendanceTable} SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE id = $1`, [check.rows[0].id, recordTime, client_timestamp]);
-                sendSMSInternal(pool, student, 'out', recordTime || new Date()).catch(console.error);
+                sendSMSInternal(pool, student, 'out', recordTime || new Date(), eventName, client_timestamp).catch(console.error);
             }
         } else {
             // Normal Mode (Daily Attendance)
@@ -4671,13 +4724,13 @@ app.post('/api/attendance/scan', async (req, res) => {
                     `INSERT INTO ${presentTable} (student_id, time_in, staff_id, location, time_in_client, time_in_server) VALUES ($1, COALESCE($4, NOW()), $2, $3, $5, NOW())`,
                     [student.student_id, staff_id || null, location || 'Kiosk', recordTime, client_timestamp]
                 );
-                sendSMSInternal(pool, student, 'in', recordTime || new Date()).catch(console.error);
+                sendSMSInternal(pool, student, 'in', recordTime || new Date(), null, client_timestamp).catch(console.error);
             } else {
                 if (check.rows.length === 0) return res.status(404).json({ error: 'No check-in record found for today', student });
                 if (check.rows[0].time_out) return res.status(409).json({ error: 'Already checked out today', student });
 
                 await client.query(`UPDATE ${presentTable} SET time_out = COALESCE($2, NOW()), time_out_client = $3, time_out_server = NOW() WHERE present_id = $1`, [check.rows[0].present_id, recordTime, client_timestamp]);
-                sendSMSInternal(pool, student, 'out', recordTime || new Date()).catch(console.error);
+                sendSMSInternal(pool, student, 'out', recordTime || new Date(), null, client_timestamp).catch(console.error);
             }
         }
 

@@ -27,6 +27,11 @@ def run_hotpatch():
 
         print("Applying Main Schema...")
         schema_sql = """
+-- OpenAttendance PostgreSQL Schema
+-- VERSION: 1.0.1
+
+
+
 -- 1. Students
 CREATE TABLE IF NOT EXISTS students (
     id SERIAL PRIMARY KEY,
@@ -56,7 +61,7 @@ CREATE TABLE IF NOT EXISTS configurations (
     logo_directory TEXT,
     organization_hotline TEXT,
     country_code TEXT NOT NULL,
-    created_config_date TEXT,
+    created_config_date TEXT, -- Consider changing to TIMESTAMP or DATE if this is not just a label
     principal_name TEXT,
     principal_title TEXT DEFAULT 'School Principal',
     school_year TEXT DEFAULT '2026-2027',
@@ -207,7 +212,6 @@ CREATE TABLE IF NOT EXISTS sections (
     grade_level INTEGER,
     strand TEXT,
     schedule_data JSONB,
-    allowed_days TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
@@ -271,7 +275,29 @@ CREATE TABLE IF NOT EXISTS router_settings (
 
         print("Applying Database Migration...")
         migration_sql = """
+-- api/database_migration.sql
+-- Migration Script: Upgrade Database Schema
+-- Run this to update an existing database to the latest structure
+-- Hotfix Requirement!!!
+
+-- VERSION: 1.0.1
+
+BEGIN;
+
 -- 1. Update sms_provider_settings
+
+CREATE TABLE IF NOT EXISTS sms_provider_settings (
+    id SERIAL PRIMARY KEY,
+    provider_type TEXT DEFAULT 'api',
+    api_url TEXT,
+    api_key TEXT,
+    tty_path TEXT,
+    baud_rate INTEGER,
+    message_template TEXT,
+    curl_config_json JSONB,
+    sms_enabled BOOLEAN DEFAULT FALSE
+);
+
 ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS provider_type TEXT CHECK (provider_type IN ('api', 'usb'));
 ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS api_url TEXT;
 ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS api_key TEXT;
@@ -288,14 +314,19 @@ ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian'));
 
+-- Fix gender constraint to ensure it matches Title Case
+-- First, sanitize existing data to prevent constraint violation errors during migration
+-- Ensure columns are TEXT to avoid padding issues (CHAR vs TEXT)
 ALTER TABLE students ALTER COLUMN gender TYPE TEXT;
 ALTER TABLE students ALTER COLUMN status TYPE TEXT;
 ALTER TABLE students ALTER COLUMN emergency_contact_relationship TYPE TEXT;
 UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male';
 UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female';
 UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other';
+-- then we proceed to fix it.
 ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check;
 ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'));
+
 
 -- 3. Update configurations
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_id TEXT;
@@ -308,7 +339,7 @@ CREATE TABLE IF NOT EXISTS sections (
     adviser_staff_id TEXT,
     room_number TEXT,
     schedule_data JSONB,
-    allowed_days TEXT,
+    allowed_days TEXT, -- Stored as comma-separated days (e.g. "Mon,Wed,Fri") or indexes "1,3,5"
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL
 );
@@ -344,6 +375,8 @@ CREATE TABLE IF NOT EXISTS events (
     attendee_count INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Hotfix for the events
 ALTER TABLE events ADD COLUMN IF NOT EXISTS attendee_count INTEGER DEFAULT 0;
 
 -- 9. Add end_datetime and event_type to events
@@ -404,7 +437,7 @@ ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '20
 ALTER TABLE configurations ADD COLUMN IF NOT EXISTS maintenance_mode BOOLEAN DEFAULT FALSE;
 
 -- 18. Attendance Present and event checks
-ALTER TABLE present ADD COLUMN IF NOT EXISTS location TEXT;
+ALTEER TABLE present ADD COLUMN IF NOT EXISTS location TEXT;
 ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT;
 
 -- 19. Calendar Config and Holidays
@@ -421,6 +454,7 @@ CREATE TABLE IF NOT EXISTS calendar_custom_holidays (
     date TEXT NOT NULL,
     type TEXT DEFAULT 'event'
 );
+
 
 -- 20. Add Time Configuration Columns
 DO $$
@@ -453,6 +487,9 @@ CREATE TABLE IF NOT EXISTS router_settings (
     password TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+COMMIT;
+
         """
         cur.execute(migration_sql)
         print("Migration applied successfully!")
@@ -460,23 +497,50 @@ CREATE TABLE IF NOT EXISTS router_settings (
         # Apply specific tables discovered from server.js for maximum assurance.
         print("Applying dynamic schema rules from server.js...")
         server_js_extra = [
-            "CREATE TABLE IF NOT EXISTS calendar_config (id SERIAL PRIMARY KEY, country TEXT DEFAULT 'PH', state TEXT, region TEXT);",
-            "CREATE TABLE IF NOT EXISTS calendar_custom_holidays (id SERIAL PRIMARY KEY, name TEXT NOT NULL, date TEXT NOT NULL, type TEXT DEFAULT 'event');",
-            "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_ip TEXT;",
-            "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS modem_password TEXT;",
-            "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS curl_config_json TEXT;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS db_version TEXT DEFAULT '0.0.0';",
+            "ALTER TABLE students ALTER COLUMN gender TYPE TEXT;",
+            "ALTER TABLE students ALTER COLUMN status TYPE TEXT;",
+            "ALTER TABLE students ALTER COLUMN emergency_contact_relationship TYPE TEXT;",
+            "UPDATE students SET gender = 'Male' WHERE gender ILIKE 'male';",
+            "UPDATE students SET gender = 'Female' WHERE gender ILIKE 'female';",
+            "UPDATE students SET gender = 'Other' WHERE gender ILIKE 'other';",
+            "UPDATE students SET gender = 'Other' WHERE gender NOT IN ('Male', 'Female', 'Other') AND gender IS NOT NULL;",
+            "ALTER TABLE students DROP CONSTRAINT IF EXISTS students_gender_check;",
+            "ALTER TABLE students ADD CONSTRAINT students_gender_check CHECK (gender IN ('Male', 'Female', 'Other'));",
+            "ALTER TABLE students DROP CONSTRAINT IF EXISTS students_emergency_contact_relationship_check;",
+            "ALTER TABLE students ADD CONSTRAINT students_emergency_contact_relationship_check CHECK (emergency_contact_relationship IN ('parent', 'guardian'));",
+            "UPDATE students SET status = 'Active' WHERE status ILIKE 'active';",
+            "UPDATE students SET status = 'Inactive' WHERE status ILIKE 'inactive';",
+            "ALTER TABLE students DROP CONSTRAINT IF EXISTS students_status_check;",
+            "ALTER TABLE students ADD CONSTRAINT students_status_check CHECK (status IN ('Active', 'Inactive'));",
+            "ALTER TABLE events ALTER COLUMN created_by_staff_id DROP NOT NULL;",
+            "ALTER TABLE sections DROP CONSTRAINT IF EXISTS sections_adviser_staff_id_fkey;",
+            "ALTER TABLE sections ADD CONSTRAINT sections_adviser_staff_id_fkey FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_name TEXT;",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS principal_title TEXT DEFAULT 'School Principal';",
+            "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS school_year TEXT DEFAULT '2024-2025';",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS location TEXT;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS location TEXT;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS ntp_server TEXT DEFAULT 'pool.ntp.org';",
+            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out TIMESTAMP;",
+            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out TIMESTAMP;",
+            "ALTER TABLE sms_provider_settings ADD COLUMN IF NOT EXISTS event_message_template TEXT;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_in_start TIME DEFAULT '06:00:00';",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_late_threshold TIME DEFAULT '08:00:00';",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_out_target TIME DEFAULT '16:00:00';",
+            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_question TEXT;",
+            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_answer TEXT;",
+            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS recovery_code TEXT;",
+            "ALTER TABLE absent ALTER COLUMN staff_id DROP NOT NULL;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fixed_weekday_schedule BOOLEAN DEFAULT TRUE;",
+            "ALTER TABLE sections ADD COLUMN IF NOT EXISTS allowed_days TEXT;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS strict_attendance_window BOOLEAN DEFAULT FALSE;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_source TEXT DEFAULT 'ntp';",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS fallback_source TEXT DEFAULT 'server';",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS enable_utc_correction BOOLEAN DEFAULT true;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS auto_time_zone BOOLEAN DEFAULT true;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS time_zone_offset INTEGER DEFAULT 0;",
+            "CREATE TABLE IF NOT EXISTS calendar_config ( id SERIAL PRIMARY KEY, country TEXT DEFAULT 'PH', state TEXT, region TEXT );",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS cert_expiry_date TIMESTAMP;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_event_based BOOLEAN DEFAULT TRUE;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS feature_id_generation BOOLEAN DEFAULT TRUE;",
@@ -489,19 +553,21 @@ CREATE TABLE IF NOT EXISTS router_settings (
             "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_in_server TIMESTAMP;",
             "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_client TEXT;",
             "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out_server TIMESTAMP;",
-            "ALTER TABLE event_attendance ADD COLUMN IF NOT EXISTS time_out TIMESTAMP;",
-            "ALTER TABLE present ADD COLUMN IF NOT EXISTS time_out TIMESTAMP;",
-            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_question TEXT;",
-            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS security_answer TEXT;",
-            "ALTER TABLE staff_login ADD COLUMN IF NOT EXISTS recovery_code TEXT;",
-            "ALTER TABLE absent ALTER COLUMN staff_id DROP NOT NULL;",
             "ALTER TABLE configurations ADD COLUMN IF NOT EXISTS test_mode BOOLEAN DEFAULT FALSE;",
             "ALTER TABLE events ADD COLUMN IF NOT EXISTS start_time_client TEXT;",
             "ALTER TABLE events ADD COLUMN IF NOT EXISTS end_time_client TEXT;",
             "ALTER TABLE testing_events ADD COLUMN IF NOT EXISTS start_time_client TEXT;",
             "ALTER TABLE testing_events ADD COLUMN IF NOT EXISTS end_time_client TEXT;",
-            "ALTER TABLE events ALTER COLUMN created_by_staff_id DROP NOT NULL;",
-            # Fix Foreign Keys for Student ID Updates
+            "ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS sent_at_client TEXT;",
+            "ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS sent_at_server TIMESTAMP;",
+            "ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS sent_at_ntp TIMESTAMP;",
+            "ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_client TEXT;",
+            "ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_server TIMESTAMP;",
+            "ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS sent_at_ntp TIMESTAMP;",
+            "ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS recipient_name TEXT;",
+            "ALTER TABLE sms_logs ADD COLUMN IF NOT EXISTS related_student_id TEXT;",
+            "ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS recipient_name TEXT;",
+            "ALTER TABLE testing_sms_logs ADD COLUMN IF NOT EXISTS related_student_id TEXT;",
             "ALTER TABLE absent DROP CONSTRAINT IF EXISTS absent_student_id_fkey;",
             "ALTER TABLE absent ADD CONSTRAINT absent_student_id_fkey FOREIGN KEY (student_id) REFERENCES students(student_id) ON UPDATE CASCADE;",
             "ALTER TABLE present DROP CONSTRAINT IF EXISTS present_student_id_fkey;",
@@ -511,19 +577,20 @@ CREATE TABLE IF NOT EXISTS router_settings (
             "ALTER TABLE sms_logs DROP CONSTRAINT IF EXISTS sms_logs_related_student_id_fkey;",
             "ALTER TABLE sms_logs ADD CONSTRAINT sms_logs_related_student_id_fkey FOREIGN KEY (related_student_id) REFERENCES students(student_id) ON UPDATE CASCADE;",
             "ALTER TABLE event_attendance DROP CONSTRAINT IF EXISTS event_attendance_student_id_fkey;",
-            "ALTER TABLE event_attendance ADD CONSTRAINT event_attendance_student_id_fkey FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE ON UPDATE CASCADE;",
-            # Test Mode Tables
-            "CREATE TABLE IF NOT EXISTS testing_configurations (config_id SERIAL PRIMARY KEY, school_name TEXT NOT NULL, school_type TEXT, school_id TEXT, address TEXT, logo_directory TEXT, organization_hotline TEXT, country_code TEXT NOT NULL, created_config_date TEXT, principal_name TEXT, principal_title TEXT DEFAULT 'School Principal', school_year TEXT DEFAULT '2026-2027', fixed_weekday_schedule BOOLEAN DEFAULT TRUE, time_source TEXT DEFAULT 'ntp', time_zone_offset INTEGER DEFAULT 0, auto_time_zone BOOLEAN DEFAULT TRUE, ntp_server TEXT DEFAULT 'pool.ntp.org', enable_utc_correction BOOLEAN DEFAULT TRUE, fallback_source TEXT DEFAULT 'server', maintenance_mode BOOLEAN DEFAULT FALSE, time_in_start TIME DEFAULT '06:00:00', time_late_threshold TIME DEFAULT '08:00:00', time_out_target TIME DEFAULT '16:00:00', strict_attendance_window BOOLEAN DEFAULT FALSE, cert_expiry_date TIMESTAMP, feature_event_based BOOLEAN DEFAULT TRUE, feature_id_generation BOOLEAN DEFAULT TRUE, feature_sf2_generation BOOLEAN DEFAULT TRUE, db_version TEXT DEFAULT '0.0.0');",
-            "CREATE TABLE IF NOT EXISTS testing_students (id SERIAL PRIMARY KEY, last_name TEXT, first_name TEXT NOT NULL, middle_name TEXT, phone_number TEXT, address TEXT, emergency_contact_name TEXT, emergency_contact_phone TEXT, emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian')), student_id TEXT NOT NULL UNIQUE, qr_code_token TEXT UNIQUE, profile_image_path TEXT, classroom_section TEXT, status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive')), gender TEXT CHECK (gender IN ('Male', 'Female', 'Other')));",
-            "CREATE TABLE IF NOT EXISTS testing_sections (section_id SERIAL PRIMARY KEY, section_name TEXT NOT NULL UNIQUE, adviser_staff_id TEXT, room_number TEXT, grade_level INTEGER, strand TEXT, schedule_data JSONB, allowed_days TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL);",
-            "CREATE TABLE IF NOT EXISTS testing_events (event_id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, event_description TEXT, location TEXT, start_datetime TIMESTAMP NOT NULL, end_datetime TIMESTAMP NOT NULL, status TEXT DEFAULT 'planned' CHECK (status IN ('planned', 'ongoing', 'completed', 'cancelled')), created_by_staff_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, attendee_count INTEGER DEFAULT 0, event_type TEXT, event_hash TEXT, secure_mode BOOLEAN DEFAULT FALSE, FOREIGN KEY (created_by_staff_id) REFERENCES staff_accounts(staff_id));",
-            "CREATE TABLE IF NOT EXISTS testing_event_staff (id SERIAL PRIMARY KEY, event_id INTEGER NOT NULL, staff_id TEXT NOT NULL, role TEXT DEFAULT 'Staff', assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE CASCADE, UNIQUE(event_id, staff_id));",
-            "CREATE TABLE IF NOT EXISTS testing_event_attendance (id SERIAL PRIMARY KEY, event_id INTEGER NOT NULL, student_id TEXT NOT NULL, time_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP, time_out TIMESTAMP, location TEXT, time_in_client TEXT, time_in_server TIMESTAMP, time_out_client TEXT, time_out_server TIMESTAMP, FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE, FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON DELETE CASCADE ON UPDATE CASCADE);",
-            "CREATE TABLE IF NOT EXISTS testing_event_notes (note_id SERIAL PRIMARY KEY, event_id INTEGER NOT NULL, staff_id TEXT, note_content TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL);",
-            "CREATE TABLE IF NOT EXISTS testing_present (present_id SERIAL PRIMARY KEY, student_id TEXT NOT NULL, staff_id TEXT NOT NULL, time_in TIMESTAMP NOT NULL, time_out TIMESTAMP, location TEXT, time_in_client TEXT, time_in_server TIMESTAMP, time_out_client TEXT, time_out_server TIMESTAMP, FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id));",
-            "CREATE TABLE IF NOT EXISTS testing_absent (absent_id SERIAL PRIMARY KEY, student_id TEXT NOT NULL, staff_id TEXT, reason TEXT, absent_datetime TIMESTAMP NOT NULL, FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id));",
-            "CREATE TABLE IF NOT EXISTS testing_excused (excused_id SERIAL PRIMARY KEY, student_id TEXT NOT NULL, requester_staff_id TEXT NOT NULL, processor_id TEXT, processor_type TEXT, reason TEXT NOT NULL, request_datetime TIMESTAMP NOT NULL, verdict_datetime TIMESTAMP, result TEXT DEFAULT 'pending', FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE, FOREIGN KEY (requester_staff_id) REFERENCES staff_accounts(staff_id));",
-            "CREATE TABLE IF NOT EXISTS testing_sms_logs (sms_id SERIAL PRIMARY KEY, recipient_number TEXT NOT NULL, recipient_name TEXT, related_student_id TEXT, message_body TEXT NOT NULL, status TEXT, sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, error_message TEXT, FOREIGN KEY (related_student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE);"
+            "ALTER TABLE event_attendance ADD CONSTRAINT event_attendance_student_id_fkey FOREIGN KEY (student_id) REFERENCES students(student_id) ON UPDATE CASCADE ON DELETE CASCADE;",
+            "CREATE TABLE IF NOT EXISTS testing_configurations ( config_id SERIAL PRIMARY KEY, school_name TEXT NOT NULL, school_type TEXT, school_id TEXT, address TEXT, logo_directory TEXT, organization_hotline TEXT, country_code TEXT NOT NULL, created_config_date TEXT, principal_name TEXT, principal_title TEXT DEFAULT 'School Principal', school_year TEXT DEFAULT '2026-2027', fixed_weekday_schedule BOOLEAN DEFAULT TRUE, time_source TEXT DEFAULT 'ntp', time_zone_offset INTEGER DEFAULT 0, auto_time_zone BOOLEAN DEFAULT TRUE, ntp_server TEXT DEFAULT 'pool.ntp.org', enable_utc_correction BOOLEAN DEFAULT TRUE, fallback_source TEXT DEFAULT 'server', maintenance_mode BOOLEAN DEFAULT FALSE, time_in_start TIME DEFAULT '06:00:00', time_late_threshold TIME DEFAULT '08:00:00', time_out_target TIME DEFAULT '16:00:00', strict_attendance_window BOOLEAN DEFAULT FALSE, cert_expiry_date TIMESTAMP, feature_event_based BOOLEAN DEFAULT TRUE, feature_id_generation BOOLEAN DEFAULT TRUE, feature_sf2_generation BOOLEAN DEFAULT TRUE, db_version TEXT DEFAULT '0.0.0' );",
+            "CREATE TABLE IF NOT EXISTS testing_students ( id SERIAL PRIMARY KEY, last_name TEXT, first_name TEXT NOT NULL, middle_name TEXT, phone_number TEXT, address TEXT, emergency_contact_name TEXT, emergency_contact_phone TEXT, emergency_contact_relationship TEXT CHECK (emergency_contact_relationship IN ('parent', 'guardian')), student_id TEXT NOT NULL UNIQUE, qr_code_token TEXT UNIQUE, profile_image_path TEXT, classroom_section TEXT, status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive')), gender TEXT CHECK (gender IN ('Male', 'Female', 'Other')) );",
+            "CREATE TABLE IF NOT EXISTS testing_sections ( section_id SERIAL PRIMARY KEY, section_name TEXT NOT NULL UNIQUE, adviser_staff_id TEXT, room_number TEXT, grade_level INTEGER, strand TEXT, schedule_data JSONB, allowed_days TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (adviser_staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL );",
+            "CREATE TABLE IF NOT EXISTS testing_events ( event_id SERIAL PRIMARY KEY, event_name TEXT NOT NULL, event_description TEXT, location TEXT, start_datetime TIMESTAMP NOT NULL, end_datetime TIMESTAMP NOT NULL, status TEXT DEFAULT 'planned' CHECK (status IN ('planned', 'ongoing', 'completed', 'cancelled')), created_by_staff_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, attendee_count INTEGER DEFAULT 0, event_type TEXT, event_hash TEXT, secure_mode BOOLEAN DEFAULT FALSE, FOREIGN KEY (created_by_staff_id) REFERENCES staff_accounts(staff_id) );",
+            "CREATE TABLE IF NOT EXISTS testing_event_staff ( id SERIAL PRIMARY KEY, event_id INTEGER NOT NULL, staff_id TEXT NOT NULL, role TEXT DEFAULT 'Staff', assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE CASCADE, UNIQUE(event_id, staff_id) );",
+            "CREATE TABLE IF NOT EXISTS testing_event_attendance ( id SERIAL PRIMARY KEY, event_id INTEGER NOT NULL, student_id TEXT NOT NULL, time_in TIMESTAMP DEFAULT CURRENT_TIMESTAMP, time_out TIMESTAMP, location TEXT, time_in_client TEXT, time_in_server TIMESTAMP, time_out_client TEXT, time_out_server TIMESTAMP, FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE, FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON DELETE CASCADE ON UPDATE CASCADE );",
+            "CREATE TABLE IF NOT EXISTS testing_event_notes ( note_id SERIAL PRIMARY KEY, event_id INTEGER NOT NULL, staff_id TEXT, note_content TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (event_id) REFERENCES testing_events(event_id) ON DELETE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) ON DELETE SET NULL );",
+            "CREATE TABLE IF NOT EXISTS testing_present ( present_id SERIAL PRIMARY KEY, student_id TEXT NOT NULL, staff_id TEXT NOT NULL, time_in TIMESTAMP NOT NULL, time_out TIMESTAMP, location TEXT, time_in_client TEXT, time_in_server TIMESTAMP, time_out_client TEXT, time_out_server TIMESTAMP, FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) );",
+            "CREATE TABLE IF NOT EXISTS testing_absent ( absent_id SERIAL PRIMARY KEY, student_id TEXT NOT NULL, staff_id TEXT, reason TEXT, absent_datetime TIMESTAMP NOT NULL, FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE, FOREIGN KEY (staff_id) REFERENCES staff_accounts(staff_id) );",
+            "CREATE TABLE IF NOT EXISTS testing_excused ( excused_id SERIAL PRIMARY KEY, student_id TEXT NOT NULL, requester_staff_id TEXT NOT NULL, processor_id TEXT, processor_type TEXT, reason TEXT NOT NULL, request_datetime TIMESTAMP NOT NULL, verdict_datetime TIMESTAMP, result TEXT DEFAULT 'pending', FOREIGN KEY (student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE, FOREIGN KEY (requester_staff_id) REFERENCES staff_accounts(staff_id) );",
+            "CREATE TABLE IF NOT EXISTS testing_sms_logs ( sms_id SERIAL PRIMARY KEY, recipient_number TEXT NOT NULL, recipient_name TEXT, related_student_id TEXT, message_body TEXT NOT NULL, status TEXT, sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, sent_at_client TEXT, sent_at_server TIMESTAMP, sent_at_ntp TIMESTAMP, error_message TEXT, FOREIGN KEY (related_student_id) REFERENCES testing_students(student_id) ON UPDATE CASCADE );",
+            "INSERT INTO calendar_config (country) VALUES ('PH');",
+            "CREATE TABLE IF NOT EXISTS calendar_custom_holidays ( id SERIAL PRIMARY KEY, name TEXT NOT NULL, date TEXT NOT NULL, type TEXT DEFAULT 'event' );"
         ]
 
         for stmt in server_js_extra:
